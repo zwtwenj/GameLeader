@@ -1,0 +1,17 @@
+# 密钥与本地环境
+.env
+backend/.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+web/dist/
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store

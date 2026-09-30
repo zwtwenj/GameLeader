@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pydantic-settings
+sqlalchemy[asyncio]
+aiomysql
+cryptography
+pyjwt
+bcrypt

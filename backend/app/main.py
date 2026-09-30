@@ -1,0 +1,40 @@
+"""GameLeader 后端入口。"""
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+
+from .auth import router as auth_router
+from .db import Base, engine
+from .errors import ApiError, api_error_handler, validation_error_handler
+from .models import User  # noqa: F401  确保 create_all 时表已注册
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    await engine.dispose()
+
+
+app = FastAPI(title="GameLeader", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.add_exception_handler(ApiError, api_error_handler)
+app.add_exception_handler(RequestValidationError, validation_error_handler)
+
+app.include_router(auth_router)
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
