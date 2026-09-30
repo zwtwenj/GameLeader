@@ -25,4 +25,5 @@ cd web && npm install && npm run dev
 ## 进度
 
 - [x] 用户登录模块（JWT 双 token、静默续期、软删除）
+- [x] 门派/心法基础数据（20 门派 31 心法，`GET /api/game/sects`）
 - [ ] M1 团队功能：建团 / 招募成员 / 开启副本
