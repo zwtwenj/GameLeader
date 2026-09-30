@@ -10,8 +10,9 @@ from .auth import router as auth_router
 from .db import Base, SessionLocal, engine
 from .errors import ApiError, api_error_handler, validation_error_handler
 from .game import router as game_router
-from .models import User, Xinfa  # noqa: F401  确保 create_all 时表已注册
+from .models import Member, Team, User, Xinfa  # noqa: F401  确保 create_all 时表已注册
 from .seed import seed_xinfa
+from .team import router as team_router
 
 
 @asynccontextmanager
@@ -38,6 +39,7 @@ app.add_exception_handler(RequestValidationError, validation_error_handler)
 
 app.include_router(auth_router)
 app.include_router(game_router)
+app.include_router(team_router)
 
 
 @app.get("/healthz")

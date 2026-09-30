@@ -45,3 +45,37 @@ class Xinfa(Base):
     equip_type: Mapped[str] = mapped_column(String(4), nullable=False)  # 体质/治疗/外功/内功
 
     sect: Mapped[Sect] = relationship(back_populates="xinfas")
+
+
+class Team(Base):
+    """团队：玩家游玩的主体。会长不是独立字段，指向团队内的一名成员
+    （leader_member_id），成员是团队的附属资产。"""
+
+    __tablename__ = "team"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)  # 团牌
+    # use_alter：team↔member 循环外键，建表时延后用 ALTER 创建
+    leader_member_id: Mapped[int | None] = mapped_column(
+        ForeignKey("member.id", use_alter=True), nullable=True
+    )
+    fund: Mapped[int] = mapped_column(default=0, nullable=False)  # 团队资金
+    member_cap: Mapped[int] = mapped_column(default=40, nullable=False)  # 成员上限
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Member(Base):
+    """成员：团队的附属资产（团长或 NPC）。门派/职业类型经 xinfa 关联取得，
+    不冗余存储。12 装备槽的明细等装备系统再做，先存整装等。"""
+
+    __tablename__ = "member"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("team.id"), nullable=False)
+    xinfa_id: Mapped[int] = mapped_column(ForeignKey("xinfa.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(16), nullable=False)  # 角色名最多六字
+    equip_level: Mapped[int] = mapped_column(default=120, nullable=False)  # 最低120
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
