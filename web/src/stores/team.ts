@@ -42,6 +42,10 @@ export interface RecruitOfferInfo {
   equip_type: string
 }
 
+export interface MemberDetailInfo extends MemberInfo {
+  slots: { slot: string; level: number }[]
+}
+
 type Status = 'loading' | 'empty' | 'ready' | 'offline'
 
 interface TeamState {
@@ -60,6 +64,8 @@ interface TeamState {
   removeMember: (memberId: number) => Promise<void>
   /** 切换成员心法（限同门派） */
   switchXinfa: (memberId: number, xinfaId: number) => Promise<void>
+  /** 成员详情（含 12 槽位装等） */
+  memberDetail: (memberId: number) => Promise<MemberDetailInfo>
 }
 
 export const useTeam = create<TeamState>((set, get) => ({
@@ -114,4 +120,7 @@ export const useTeam = create<TeamState>((set, get) => ({
     })
     await get().load()
   },
+
+  memberDetail: (memberId) =>
+    request<MemberDetailInfo>(`/api/team/members/${memberId}`),
 }))

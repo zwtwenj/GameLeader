@@ -7,6 +7,22 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
 
+# 12 装备槽位：(字段前缀, 显示名)，戒指两个槽位
+MEMBER_SLOTS = [
+    ("hat", "帽子"),
+    ("chest", "上衣"),
+    ("belt", "腰带"),
+    ("wrist", "护腕"),
+    ("pants", "下装"),
+    ("shoes", "鞋子"),
+    ("necklace", "项链"),
+    ("pendant", "腰坠"),
+    ("ring1", "戒指1"),
+    ("ring2", "戒指2"),
+    ("weapon", "武器"),
+    ("ranged", "远程武器"),
+]
+
 
 class User(Base):
     __tablename__ = "user"
@@ -67,8 +83,11 @@ class Team(Base):
 
 
 class Member(Base):
-    """成员：团队的附属资产（团长或 NPC）。门派/职业类型经 xinfa 关联取得，
-    不冗余存储。12 装备槽的明细等装备系统再做，先存整装等。"""
+    """成员：团队的附属资产（团长或 NPC）。门派/职业类型经 xinfa 关联取得。
+
+    装备按 plan.md 的 12 槽位各存一个装等（不存分类，"130外功帽子"里的
+    分类只用于竞拍过滤）；成员装等 = 各槽平均向下取整，槽位变动后调
+    sync_equip_level()。切心法不影响槽位装等。"""
 
     __tablename__ = "member"
 
@@ -79,6 +98,24 @@ class Member(Base):
     equip_level: Mapped[int] = mapped_column(default=120, nullable=False)  # 最低120
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # 12 装备槽位装等（与 MEMBER_SLOTS 对应）
+    hat_level: Mapped[int] = mapped_column(default=120, nullable=False)
+    chest_level: Mapped[int] = mapped_column(default=120, nullable=False)
+    belt_level: Mapped[int] = mapped_column(default=120, nullable=False)
+    wrist_level: Mapped[int] = mapped_column(default=120, nullable=False)
+    pants_level: Mapped[int] = mapped_column(default=120, nullable=False)
+    shoes_level: Mapped[int] = mapped_column(default=120, nullable=False)
+    necklace_level: Mapped[int] = mapped_column(default=120, nullable=False)
+    pendant_level: Mapped[int] = mapped_column(default=120, nullable=False)
+    ring1_level: Mapped[int] = mapped_column(default=120, nullable=False)
+    ring2_level: Mapped[int] = mapped_column(default=120, nullable=False)
+    weapon_level: Mapped[int] = mapped_column(default=120, nullable=False)
+    ranged_level: Mapped[int] = mapped_column(default=120, nullable=False)
+
+    def sync_equip_level(self) -> None:
+        """槽位装等变动后重算成员装等（平均向下取整）。"""
+        self.equip_level = sum(getattr(self, f"{key}_level") for key, _ in MEMBER_SLOTS) // len(MEMBER_SLOTS)
 
 
 class RecruitOffer(Base):

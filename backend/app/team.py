@@ -13,7 +13,7 @@ from .data_names import pick_random_name
 from .db import get_db
 from .errors import ApiError
 from .member_service import generate_member
-from .models import Member, RecruitOffer, Sect, Team, User, Xinfa
+from .models import MEMBER_SLOTS, Member, RecruitOffer, Sect, Team, User, Xinfa
 
 router = APIRouter(prefix="/api/team", tags=["team"])
 
@@ -269,6 +269,32 @@ async def get_my_member(
             )
         )
     ).scalar_one_or_none()
+
+
+@router.get("/members/{member_id}")
+async def member_detail(
+    member_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """成员详情：含 12 槽位装等（列表接口不带，详情才返回）。"""
+    team = await get_my_team(db, user.id)
+    if team is None:
+        raise ApiError(404, 40400, "还没有团队")
+    member = await get_my_member(db, team.id, member_id)
+    if member is None:
+        raise ApiError(404, 40400, "成员不存在")
+    xinfa = await db.get(Xinfa, member.xinfa_id)
+    sect_name = (
+        await db.scalar(select(Sect.name).where(Sect.id == xinfa.sect_id))
+    ) or ""
+    return {
+        **member_out(member, xinfa, sect_name),
+        "slots": [
+            {"slot": label, "level": getattr(member, f"{key}_level")}
+            for key, label in MEMBER_SLOTS
+        ],
+    }
 
 
 @router.delete("/members/{member_id}")

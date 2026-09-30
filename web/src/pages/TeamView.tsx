@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/client'
-import type { MemberInfo, RecruitOfferInfo, TeamInfo, XinfaInfo } from '../stores/team'
+import type {
+  MemberDetailInfo,
+  MemberInfo,
+  RecruitOfferInfo,
+  TeamInfo,
+  XinfaInfo,
+} from '../stores/team'
 import { useTeam } from '../stores/team'
 
 const ROLE_BADGE: Record<string, string> = {
@@ -200,7 +206,31 @@ function MemberCard({
   onSwitch: (xinfaId: number) => void
   onRemove: () => void
 }) {
+  const { memberDetail } = useTeam()
+  const [showDetail, setShowDetail] = useState(false)
+  const [detail, setDetail] = useState<MemberDetailInfo | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+
   const canSwitch = xinfas.length > 1
+
+  async function toggleDetail() {
+    if (showDetail) {
+      setShowDetail(false)
+      return
+    }
+    setShowDetail(true)
+    if (detail) return
+    setDetailLoading(true)
+    try {
+      setDetail(await memberDetail(m.id))
+    } catch {
+      setDetail(null)
+      setShowDetail(false)
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
   return (
     <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-neutral-200">
       <div className="flex items-center justify-between">
@@ -228,25 +258,48 @@ function MemberCard({
         <span>装等 {m.equip_level}</span>
       </div>
 
-      {(canSwitch || !isLeader) && (
-        <div className="mt-3 flex gap-2 border-t border-neutral-100 pt-2.5">
-          {canSwitch && (
-            <button
-              className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
-              onClick={onToggleSwitch}
-              disabled={busy}
-            >
-              切换心法
-            </button>
-          )}
-          {!isLeader && (
-            <button
-              className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
-              onClick={onRemove}
-              disabled={busy}
-            >
-              移除
-            </button>
+      <div className="mt-3 flex gap-2 border-t border-neutral-100 pt-2.5">
+        <button
+          className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100"
+          onClick={() => void toggleDetail()}
+        >
+          {detailLoading ? '加载中…' : showDetail ? '收起装备' : '装备详情'}
+        </button>
+        {canSwitch && (
+          <button
+            className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+            onClick={onToggleSwitch}
+            disabled={busy}
+          >
+            切换心法
+          </button>
+        )}
+        {!isLeader && (
+          <button
+            className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+            onClick={onRemove}
+            disabled={busy}
+          >
+            移除
+          </button>
+        )}
+      </div>
+
+      {showDetail && (
+        <div className="mt-2 rounded-lg bg-neutral-50 p-2">
+          {detailLoading && <p className="text-xs text-neutral-400">加载中…</p>}
+          {detail && (
+            <div className="grid grid-cols-3 gap-1.5">
+              {detail.slots.map((s) => (
+                <div
+                  key={s.slot}
+                  className="flex items-center justify-between rounded bg-white px-2 py-1 text-xs ring-1 ring-neutral-200"
+                >
+                  <span className="text-neutral-500">{s.slot}</span>
+                  <span className="font-medium text-neutral-900">{s.level}</span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}
