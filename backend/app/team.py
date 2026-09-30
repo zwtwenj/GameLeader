@@ -50,7 +50,7 @@ async def create_team(
     db: AsyncSession = Depends(get_db),
 ):
     """建团完整流程（单事务，任一步失败整体回滚）：
-    建团队 → 按团长名+门派生成成员 → 设为团长。"""
+    建团队 → 按团长名+门派生成成员 → 设为团长。团长心法取该门派第一个。"""
     if await get_my_team(db, user.id) is not None:
         raise ApiError(409, 40900, "你已拥有团队")
     name_taken = (
