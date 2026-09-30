@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/client'
-import type { MemberInfo, RecruitOfferInfo, TeamInfo } from '../stores/team'
+import type { MemberInfo, RecruitOfferInfo, TeamInfo, XinfaInfo } from '../stores/team'
 import { useTeam } from '../stores/team'
 
 const ROLE_BADGE: Record<string, string> = {
@@ -11,12 +11,38 @@ const ROLE_BADGE: Record<string, string> = {
 }
 
 export default function TeamView({ team }: { team: TeamInfo }) {
-  const { recruit, acceptRecruit, load } = useTeam()
+  const { recruit, acceptRecruit, removeMember, switchXinfa, load, sects, fetchSects } =
+    useTeam()
   const [candidate, setCandidate] = useState<RecruitOfferInfo | null>(null)
   const [recruiting, setRecruiting] = useState(false)
   const [accepting, setAccepting] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [switchingId, setSwitchingId] = useState<number | null>(null)
   const [error, setError] = useState('')
+  const started = useRef(false)
+
+  // 切换心法需要门派的心法列表；缓存为空时取一次
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    fetchSects().catch(() => {})
+  }, [fetchSects])
+
   const full = team.members.length >= team.member_cap
+
+  async function run(fn: () => Promise<void>) {
+    if (busy) return
+    setError('')
+    setBusy(true)
+    try {
+      await fn()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '出了点问题，请重试')
+      await load().catch(() => {}) // 失败后以服务端为准刷新，防状态漂移
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function handleRecruit() {
     if (recruiting) return
@@ -48,15 +74,28 @@ export default function TeamView({ team }: { team: TeamInfo }) {
     }
   }
 
+  function handleRemove(m: MemberInfo) {
+    if (busy) return
+    if (!window.confirm(`确定移除成员「${m.name}」？`)) return
+    void run(() => removeMember(m.id))
+  }
+
+  function handleSwitch(m: MemberInfo, xinfaId: number) {
+    setSwitchingId(null)
+    void run(() => switchXinfa(m.id, xinfaId))
+  }
+
+  function xinfasOf(sectName: string): XinfaInfo[] {
+    return sects.find((s) => s.name === sectName)?.xinfas ?? []
+  }
+
   return (
     <div className="mx-auto max-w-2xl px-4 py-10">
       <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-neutral-200">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold">{team.name}</h1>
-            <p className="mt-1 text-sm text-neutral-500">
-              团队资金：{team.fund}
-            </p>
+            <p className="mt-1 text-sm text-neutral-500">团队资金：{team.fund}</p>
           </div>
           <div className="text-right">
             <p className="text-sm text-neutral-500">
@@ -123,14 +162,45 @@ export default function TeamView({ team }: { team: TeamInfo }) {
       <h2 className="mt-8 mb-3 text-sm font-medium text-neutral-600">成员</h2>
       <div className="grid gap-3 sm:grid-cols-2">
         {team.members.map((m) => (
-          <MemberCard key={m.id} member={m} isLeader={m.id === team.leader_member_id} />
+          <MemberCard
+            key={m.id}
+            member={m}
+            isLeader={m.id === team.leader_member_id}
+            xinfas={xinfasOf(m.sect)}
+            switching={switchingId === m.id}
+            busy={busy}
+            onToggleSwitch={() =>
+              setSwitchingId(switchingId === m.id ? null : m.id)
+            }
+            onSwitch={(xinfaId) => handleSwitch(m, xinfaId)}
+            onRemove={() => handleRemove(m)}
+          />
         ))}
       </div>
     </div>
   )
 }
 
-function MemberCard({ member: m, isLeader }: { member: MemberInfo; isLeader: boolean }) {
+function MemberCard({
+  member: m,
+  isLeader,
+  xinfas,
+  switching,
+  busy,
+  onToggleSwitch,
+  onSwitch,
+  onRemove,
+}: {
+  member: MemberInfo
+  isLeader: boolean
+  xinfas: XinfaInfo[]
+  switching: boolean
+  busy: boolean
+  onToggleSwitch: () => void
+  onSwitch: (xinfaId: number) => void
+  onRemove: () => void
+}) {
+  const canSwitch = xinfas.length > 1
   return (
     <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-neutral-200">
       <div className="flex items-center justify-between">
@@ -142,7 +212,12 @@ function MemberCard({ member: m, isLeader }: { member: MemberInfo; isLeader: boo
             </span>
           )}
         </div>
-        <span className={'rounded px-1.5 py-0.5 text-xs ' + (ROLE_BADGE[m.role] ?? 'bg-neutral-100 text-neutral-600')}>
+        <span
+          className={
+            'rounded px-1.5 py-0.5 text-xs ' +
+            (ROLE_BADGE[m.role] ?? 'bg-neutral-100 text-neutral-600')
+          }
+        >
           {m.role}
         </span>
       </div>
@@ -152,6 +227,46 @@ function MemberCard({ member: m, isLeader }: { member: MemberInfo; isLeader: boo
         </span>
         <span>装等 {m.equip_level}</span>
       </div>
+
+      {(canSwitch || !isLeader) && (
+        <div className="mt-3 flex gap-2 border-t border-neutral-100 pt-2.5">
+          {canSwitch && (
+            <button
+              className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+              onClick={onToggleSwitch}
+              disabled={busy}
+            >
+              切换心法
+            </button>
+          )}
+          {!isLeader && (
+            <button
+              className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+              onClick={onRemove}
+              disabled={busy}
+            >
+              移除
+            </button>
+          )}
+        </div>
+      )}
+
+      {switching && (
+        <div className="mt-2 flex flex-wrap gap-2 rounded-lg bg-neutral-50 p-2">
+          {xinfas
+            .filter((x) => x.name !== m.xinfa)
+            .map((x) => (
+              <button
+                key={x.id}
+                className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-700 hover:border-neutral-900 disabled:opacity-50"
+                onClick={() => onSwitch(x.id)}
+                disabled={busy}
+              >
+                {x.name}（{x.role}）
+              </button>
+            ))}
+        </div>
+      )}
     </div>
   )
 }

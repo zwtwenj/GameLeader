@@ -56,6 +56,10 @@ interface TeamState {
   recruit: () => Promise<RecruitOfferInfo>
   /** 同意招募：消耗候选并生成成员（名字/门派以服务端临时数据为准） */
   acceptRecruit: (offerId: number) => Promise<void>
+  /** 移除成员（软删除，团长不可移除） */
+  removeMember: (memberId: number) => Promise<void>
+  /** 切换成员心法（限同门派） */
+  switchXinfa: (memberId: number, xinfaId: number) => Promise<void>
 }
 
 export const useTeam = create<TeamState>((set, get) => ({
@@ -95,6 +99,19 @@ export const useTeam = create<TeamState>((set, get) => ({
 
   acceptRecruit: async (offerId) => {
     await request(`/api/team/recruit/${offerId}/accept`, { method: 'POST' })
+    await get().load()
+  },
+
+  removeMember: async (memberId) => {
+    await request(`/api/team/members/${memberId}`, { method: 'DELETE' })
+    await get().load()
+  },
+
+  switchXinfa: async (memberId, xinfaId) => {
+    await request(`/api/team/members/${memberId}/xinfa`, {
+      method: 'PUT',
+      body: JSON.stringify({ xinfa_id: xinfaId }),
+    })
     await get().load()
   },
 }))

@@ -24,6 +24,10 @@ class TeamCreateIn(BaseModel):
     sect_id: int  # 团长门派
 
 
+class XinfaSwitchIn(BaseModel):
+    xinfa_id: int
+
+
 async def get_my_team(db: AsyncSession, user_id: int) -> Team | None:
     return (
         await db.execute(
@@ -251,3 +255,88 @@ async def accept_recruit(
         raise
 
     return member_out(member, xinfa, sect_name)
+
+
+async def get_my_member(
+    db: AsyncSession, team_id: int, member_id: int
+) -> Member | None:
+    return (
+        await db.execute(
+            select(Member).where(
+                Member.id == member_id,
+                Member.team_id == team_id,
+                Member.deleted_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+
+
+@router.delete("/members/{member_id}")
+async def remove_member(
+    member_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """移除成员（软删除）。团长是团队锚点，不允许移除。"""
+    team = await get_my_team(db, user.id)
+    if team is None:
+        raise ApiError(404, 40400, "还没有团队")
+    try:
+        member = (
+            await db.execute(
+                select(Member)
+                .where(Member.id == member_id, Member.deleted_at.is_(None))
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if member is None or member.team_id != team.id:
+            raise ApiError(404, 40400, "成员不存在")
+        if member.id == team.leader_member_id:
+            raise ApiError(409, 40900, "团长不能移除")
+        member.deleted_at = datetime.now()
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
+    return {"ok": True}
+
+
+@router.put("/members/{member_id}/xinfa")
+async def switch_xinfa(
+    member_id: int,
+    body: XinfaSwitchIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """切换成员心法：仅限同门派内切换（能否切换由该门派心法数决定，无需
+    门派表冗余字段）。职业类型与装备分类随 xinfa 自动变化。"""
+    team = await get_my_team(db, user.id)
+    if team is None:
+        raise ApiError(404, 40400, "还没有团队")
+    try:
+        member = (
+            await db.execute(
+                select(Member)
+                .where(Member.id == member_id, Member.deleted_at.is_(None))
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if member is None or member.team_id != team.id:
+            raise ApiError(404, 40400, "成员不存在")
+        target = await db.get(Xinfa, body.xinfa_id)
+        if target is None:
+            raise ApiError(422, 42200, "心法不存在")
+        current = await db.get(Xinfa, member.xinfa_id)
+        if target.sect_id != current.sect_id:
+            raise ApiError(409, 40900, "只能切换同门派心法")
+        if target.id == current.id:
+            raise ApiError(409, 40900, "已是当前心法")
+        member.xinfa_id = target.id
+        sect_name = (
+            await db.scalar(select(Sect.name).where(Sect.id == target.sect_id))
+        ) or ""
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
+    return member_out(member, target, sect_name)
