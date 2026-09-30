@@ -79,3 +79,19 @@ class Member(Base):
     equip_level: Mapped[int] = mapped_column(default=120, nullable=False)  # 最低120
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class RecruitOffer(Base):
+    """招募临时数据：服务端抽出的候选成员。前端只拿 offer_id 来创建，
+    名字/门派不可由客户端指定；同意后消耗（accepted_at），拒绝后由下次
+    招募作废或自然过期。每队同时最多一个有效候选。"""
+
+    __tablename__ = "recruit_offer"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("team.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(16), nullable=False)
+    sect_id: Mapped[int] = mapped_column(ForeignKey("sect.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

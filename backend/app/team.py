@@ -1,16 +1,19 @@
-"""团队路由：建团（完整事务流程）与查询自己的团队。"""
+"""团队路由：建团（完整事务流程）、招募、查询自己的团队。"""
+
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import get_current_user
+from .data_names import pick_random_name
 from .db import get_db
 from .errors import ApiError
 from .member_service import generate_member
-from .models import Member, Sect, Team, User, Xinfa
+from .models import Member, RecruitOffer, Sect, Team, User, Xinfa
 
 router = APIRouter(prefix="/api/team", tags=["team"])
 
@@ -116,3 +119,135 @@ async def my_team(
             "members": [member_out(m, x, s.name) for m, x, s in rows],
         }
     }
+
+
+async def get_team_member_count(db: AsyncSession, team_id: int) -> int:
+    return (
+        await db.scalar(
+            select(func.count(Member.id)).where(
+                Member.team_id == team_id, Member.deleted_at.is_(None)
+            )
+        )
+    ) or 0
+
+
+@router.post("/recruit", status_code=201)
+async def draw_recruit(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    """刷新招募：服务端随机抽一个候选（名字不与现有成员重复 + 随机门派），
+    存为临时数据返回 offer_id。每队同时最多一个有效候选，旧的自动作废。"""
+    team = await get_my_team(db, user.id)
+    if team is None:
+        raise ApiError(404, 40400, "还没有团队")
+    if await get_team_member_count(db, team.id) >= team.member_cap:
+        raise ApiError(409, 40900, "团队成员已满")
+
+    # 旧候选作废：保证每队最多一个有效招募
+    old = (
+        await db.execute(
+            select(RecruitOffer).where(
+                RecruitOffer.team_id == team.id, RecruitOffer.accepted_at.is_(None)
+            )
+        )
+    ).scalars().all()
+    for offer in old:
+        await db.delete(offer)
+
+    names = set(
+        (
+            await db.execute(
+                select(Member.name).where(
+                    Member.team_id == team.id, Member.deleted_at.is_(None)
+                )
+            )
+        ).scalars()
+    )
+    name = pick_random_name(names)
+    sect = (
+        await db.execute(select(Sect).order_by(func.rand()).limit(1))
+    ).scalar_one()
+    xinfa = (
+        await db.execute(
+            select(Xinfa)
+            .where(Xinfa.sect_id == sect.id)
+            .order_by(Xinfa.id)
+            .limit(1)
+        )
+    ).scalar_one()  # 与 generate_member 同规则，预览即所得
+
+    offer = RecruitOffer(
+        team_id=team.id,
+        name=name,
+        sect_id=sect.id,
+        expires_at=datetime.now() + timedelta(minutes=10),
+    )
+    db.add(offer)
+    await db.commit()
+    await db.refresh(offer)
+
+    return {
+        "offer_id": offer.id,
+        "name": offer.name,
+        "sect": sect.name,
+        "xinfa": xinfa.name,
+        "role": xinfa.role,
+        "equip_type": xinfa.equip_type,
+        "expires_in": 600,
+    }
+
+
+@router.post("/recruit/{offer_id}/accept", status_code=201)
+async def accept_recruit(
+    offer_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """同意招募：消耗候选（行锁防重放），调用生成成员服务。拒绝无接口——
+    不调用即可，候选由下次招募作废或自然过期。"""
+    team = await get_my_team(db, user.id)
+    if team is None:
+        raise ApiError(404, 40400, "还没有团队")
+
+    try:
+        offer = (
+            await db.execute(
+                select(RecruitOffer)
+                .where(RecruitOffer.id == offer_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if offer is None or offer.team_id != team.id:
+            raise ApiError(404, 40400, "招募不存在")
+        if offer.accepted_at is not None:
+            raise ApiError(409, 40900, "该招募已被处理")
+        if offer.expires_at <= datetime.now():
+            raise ApiError(409, 40900, "招募已过期，重新招募即可")
+        if await get_team_member_count(db, team.id) >= team.member_cap:
+            raise ApiError(409, 40900, "团队成员已满")
+        dup = (
+            await db.execute(
+                select(Member.id).where(
+                    Member.team_id == team.id,
+                    Member.name == offer.name,
+                    Member.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if dup is not None:
+            raise ApiError(409, 40900, "已有同名成员")
+
+        member, xinfa = await generate_member(
+            db, team_id=team.id, name=offer.name, sect_id=offer.sect_id
+        )
+        offer.accepted_at = datetime.now()
+        sect_name = (await db.scalar(select(Sect.name).where(Sect.id == offer.sect_id))) or ""
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise ApiError(409, 40900, "招募处理冲突，请重试")
+    except BaseException:
+        await db.rollback()  # 成员与消耗候选必须同生共死
+        raise
+
+    return member_out(member, xinfa, sect_name)

@@ -33,6 +33,15 @@ export interface SectInfo {
   xinfas: XinfaInfo[]
 }
 
+export interface RecruitOfferInfo {
+  offer_id: number
+  name: string
+  sect: string
+  xinfa: string
+  role: string
+  equip_type: string
+}
+
 type Status = 'loading' | 'empty' | 'ready' | 'offline'
 
 interface TeamState {
@@ -43,6 +52,10 @@ interface TeamState {
   load: () => Promise<void>
   fetchSects: () => Promise<void>
   createTeam: (name: string, leaderName: string, sectId: number) => Promise<void>
+  /** 刷新招募：服务端抽候选，前端只持有 offer_id */
+  recruit: () => Promise<RecruitOfferInfo>
+  /** 同意招募：消耗候选并生成成员（名字/门派以服务端临时数据为准） */
+  acceptRecruit: (offerId: number) => Promise<void>
 }
 
 export const useTeam = create<TeamState>((set, get) => ({
@@ -74,6 +87,14 @@ export const useTeam = create<TeamState>((set, get) => ({
       body: JSON.stringify({ name, leader_name: leaderName, sect_id: sectId }),
     })
     // 以服务端为准刷新团队数据
+    await get().load()
+  },
+
+  recruit: async () =>
+    request<RecruitOfferInfo>('/api/team/recruit', { method: 'POST' }),
+
+  acceptRecruit: async (offerId) => {
+    await request(`/api/team/recruit/${offerId}/accept`, { method: 'POST' })
     await get().load()
   },
 }))
