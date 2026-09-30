@@ -95,3 +95,34 @@ class RecruitOffer(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Dungeon(Base):
+    """副本：人数规格与平衡系数 K，BOSS 由前到后 seq 递增。"""
+
+    __tablename__ = "dungeon"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    size: Mapped[int] = mapped_column(nullable=False)  # 人数要求：5/10/25
+    balance_k: Mapped[int] = mapped_column(nullable=False)  # 平衡系数 K，与副本绑定
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    bosses: Mapped[list["Boss"]] = relationship(back_populates="dungeon")
+
+
+class Boss(Base):
+    """BOSS：A=要求装等，掉落区间 [B, C]（击倒后在该区间随机掉装备，细节后定）。"""
+
+    __tablename__ = "boss"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    dungeon_id: Mapped[int] = mapped_column(ForeignKey("dungeon.id"), nullable=False)
+    seq: Mapped[int] = mapped_column(nullable=False)  # 由前到后，1 起
+    name: Mapped[str] = mapped_column(String(32), nullable=False)
+    gear_req: Mapped[int] = mapped_column(nullable=False)  # A：要求装等
+    drop_low: Mapped[int] = mapped_column(nullable=False)  # B：掉落装等下限
+    drop_high: Mapped[int] = mapped_column(nullable=False)  # C：掉落装等上限
+
+    dungeon: Mapped[Dungeon] = relationship(back_populates="bosses")

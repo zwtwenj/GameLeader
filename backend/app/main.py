@@ -10,8 +10,16 @@ from .auth import router as auth_router
 from .db import Base, SessionLocal, engine
 from .errors import ApiError, api_error_handler, validation_error_handler
 from .game import router as game_router
-from .models import Member, RecruitOffer, Team, User, Xinfa  # noqa: F401  确保 create_all 时表已注册
-from .seed import seed_xinfa
+from .models import (  # noqa: F401  确保 create_all 时表已注册
+    Boss,
+    Dungeon,
+    Member,
+    RecruitOffer,
+    Team,
+    User,
+    Xinfa,
+)
+from .seed import seed_dungeon, seed_xinfa
 from .team import router as team_router
 
 
@@ -21,6 +29,7 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     async with SessionLocal() as db:
         await seed_xinfa(db)
+        await seed_dungeon(db)
     yield
     await engine.dispose()
 
