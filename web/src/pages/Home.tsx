@@ -1,28 +1,55 @@
+import { useEffect, useRef } from 'react'
+
+import TeamCreate from './TeamCreate'
+import TeamView from './TeamView'
 import { useAuth } from '../stores/auth'
+import { useTeam } from '../stores/team'
 
 export default function Home({ user }: { user: { id: number; username: string } }) {
   const { logout } = useAuth()
+  const { status, team, load } = useTeam()
+  const started = useRef(false)
+
+  // 进页恰好一次加载团队状态（ref 防 StrictMode 双调用）
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    void load()
+  }, [load])
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-16">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">我是团长</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            欢迎，{user.username}（#{user.id}）
-          </p>
+    <div className="min-h-screen">
+      <header className="border-b border-neutral-200 bg-white">
+        <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-3">
+          <span className="font-semibold">游戏会长</span>
+          <div className="flex items-center gap-3 text-sm">
+            <span className="text-neutral-500">{user.username}</span>
+            <button
+              className="text-neutral-500 hover:text-neutral-900"
+              onClick={logout}
+            >
+              退出
+            </button>
+          </div>
         </div>
-        <button
-          className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-200"
-          onClick={logout}
-        >
-          退出登录
-        </button>
-      </div>
+      </header>
 
-      <div className="mt-10 rounded-xl bg-white p-8 text-center text-sm text-neutral-400 shadow-sm ring-1 ring-neutral-200">
-        M1 团队功能开发中：创建团队、招募成员、开启副本
-      </div>
+      {status === 'loading' && (
+        <p className="py-24 text-center text-sm text-neutral-400">加载团队信息…</p>
+      )}
+      {status === 'offline' && (
+        <div className="py-24 text-center">
+          <p className="text-sm text-neutral-600">服务暂不可用</p>
+          <button
+            className="mt-3 rounded bg-neutral-800 px-4 py-1.5 text-sm text-white hover:bg-neutral-700"
+            onClick={() => void load()}
+          >
+            重试
+          </button>
+        </div>
+      )}
+      {status === 'empty' && <TeamCreate />}
+      {status === 'ready' && team && <TeamView team={team} />}
     </div>
   )
 }
