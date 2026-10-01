@@ -15,6 +15,7 @@ const SLOTS = [
   '腰坠',
   '戒指',
   '远程武器',
+  '武器',
 ]
 const TYPES = ['外功', '内功', '体质', '治疗']
 
@@ -65,7 +66,7 @@ export default function CraftModal({ onClose }: { onClose: () => void }) {
   const isWeapon = slot === '武器'
 
   const canCraft =
-    tier !== null && slot !== null && (isWeapon ? sects.length > 0 : equipType !== null)
+    tier !== null && slot !== null && equipType !== null
 
   async function handleCraft() {
     if (loading || tierId === null || !canCraft) return
