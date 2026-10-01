@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import select
 
 from .auth import router as auth_router
 from .db import Base, SessionLocal, engine
@@ -22,7 +23,7 @@ from .models import (  # noqa: F401  确保 create_all 时表已注册
     User,
     Xinfa,
 )
-from .raid import router as raid_router
+from .raid import router as raid_router, spawn_chat_task, stop_all_chat_tasks
 from .seed import seed_dungeon, seed_xinfa
 from .team import router as team_router
 
@@ -34,7 +35,12 @@ async def lifespan(app: FastAPI):
     async with SessionLocal() as db:
         await seed_xinfa(db)
         await seed_dungeon(db)
+        # 服务（重启）恢复：给仍在进行中的副本补启聊天后台任务
+        ongoing = (await db.execute(select(Raid.id).where(Raid.status == "进行中"))).scalars().all()
+    for raid_id in ongoing:
+        spawn_chat_task(raid_id)
     yield
+    stop_all_chat_tasks()
     await engine.dispose()
 
 

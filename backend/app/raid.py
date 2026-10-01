@@ -7,8 +7,12 @@
 
 掉落（fight_end 胜利后）：3+1 —— 必掉 3 件部位装备（分类随机）+ 50% 概率
 额外掉 1 把随机门派武器。每件掉落立即尝试分配给"当前属性重合且该部位
-更差"的随机成员（分配即穿，不落库待竞拍）；无人符合则分解为五行石。"""
+更差"的随机成员（分配即穿，不落库待竞拍）；无人符合则分解为五行石。
 
+团队聊天：副本进行期间，后台任务每 10~20 秒随机让一名进本成员说一句
+骚话（jx3api /saohua/random），写入实例 chat 字段；副本结束/解散即停。"""
+
+import asyncio
 import json
 import random
 from dataclasses import dataclass, field
@@ -21,7 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import get_current_user
-from .db import get_db
+from .db import SessionLocal, get_db
 from .errors import ApiError
 from .models import (
     COMPOSITION_RULES,
@@ -38,11 +42,79 @@ from .models import (
     User,
     Xinfa,
 )
+from .services.jx3api import client as jx3_client
 
 router = APIRouter(prefix="/api/raid", tags=["raid"])
 
+# ---------- 团队聊天后台任务：副本进行期间随机成员播报骚话 ----------
+
+_chat_tasks: dict[int, asyncio.Task] = {}
+
+
+def spawn_chat_task(raid_id: int) -> None:
+    """为进行中的副本启动聊天后台任务（幂等；服务重启后按进行中副本补启）。"""
+    task = _chat_tasks.get(raid_id)
+    if task is not None and not task.done():
+        return
+    _chat_tasks[raid_id] = asyncio.create_task(_chat_loop(raid_id))
+
+
+def stop_chat_task(raid_id: int) -> None:
+    task = _chat_tasks.pop(raid_id, None)
+    if task is not None:
+        task.cancel()
+
+
+def stop_all_chat_tasks() -> None:
+    for task in _chat_tasks.values():
+        task.cancel()
+    _chat_tasks.clear()
+
+
+async def _chat_loop(raid_id: int) -> None:
+    """每 10~20 秒：随机一名进本成员说一句骚话（jx3api），写入实例 chat。"""
+    try:
+        while True:
+            await asyncio.sleep(random.uniform(*CHAT_INTERVAL_RANGE))
+            async with SessionLocal() as db:
+                raid = (
+                    await db.execute(select(Raid).where(Raid.id == raid_id))
+                ).scalar_one_or_none()
+                if raid is None or raid.status != "进行中":
+                    return  # 副本已结束，任务自然退出
+                names = [
+                    r[0]
+                    for r in (
+                        await db.execute(
+                            select(RaidMember.name).where(RaidMember.raid_id == raid_id)
+                        )
+                    ).all()
+                ]
+                if not names:
+                    return
+                try:
+                    text = await jx3_client.saohua_random()
+                except Exception:
+                    continue  # 接口抖动：这一轮不说话，下轮再试
+                if not text:
+                    continue
+                chat = json.loads(raid.chat or "[]")
+                chat.append(
+                    {
+                        "member": random.choice(names),
+                        "message": text,
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                    }
+                )
+                raid.chat = json.dumps(chat, ensure_ascii=False)
+                await db.commit()
+    except asyncio.CancelledError:
+        pass  # 解散/关服时被取消，正常退出
+
+
 MAX_RETRIES = 5  # 共享战斗重试次数（全副本所有 BOSS 共享）
 WEAPON_DROP_CHANCE = 0.5  # 击败 BOSS 后额外掉落武器的概率（3+1 掉落的"1"）
+CHAT_INTERVAL_RANGE = (10, 20)  # 团队聊天间隔（秒，开发阶段）
 
 # 掉落部位 → 成员装备槽字段（戒指两个槽位特殊处理，武器按门派匹配）
 SLOT_TO_COLUMN = {
@@ -433,6 +505,7 @@ async def raid_payload(db: AsyncSession, raid: Raid) -> dict:
         "retries_left": raid.retries_left,
         "current_boss": current_boss,
         "log": json.loads(raid.log or "[]"),
+        "chat": json.loads(raid.chat or "[]"),
         "members": [
             {
                 "member_id": rm.member_id,
@@ -545,6 +618,7 @@ async def create_raid(
         await db.rollback()  # 实例、快照、锁定同生共死
         raise
 
+    spawn_chat_task(raid.id)  # 副本开始：启动团队聊天后台任务
     return {"raid": await raid_payload(db, raid)}
 
 
@@ -700,4 +774,5 @@ async def abandon_raid(
         await db.rollback()  # 状态与解锁同生共死
         raise
 
+    stop_chat_task(raid_id)  # 解散：停止该副本的聊天任务
     return {"raid": await raid_payload(db, raid)}

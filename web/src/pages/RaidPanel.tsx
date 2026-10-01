@@ -11,7 +11,15 @@ const ROLE_BADGE: Record<string, string> = {
 
 const TICK_MS = 10_000 // 开发阶段：每 10 秒推进一步
 
-/** 副本悬浮窗：固定右侧，可收起（右缘竖排标签）/展开（完整副本信息侧栏）。
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mb-1.5 border-b border-neutral-100 pb-1 text-xs font-medium tracking-wide text-neutral-400">
+      {children}
+    </p>
+  )
+}
+
+/** 副本悬浮窗：固定右侧，可收起（右缘竖排标签）/展开（功能分块侧栏）。
  * 副本进行中默认展开；团队成员上方不再占用版面。 */
 export default function RaidPanel() {
   const { raid, tick, abandonRaid, load } = useRaid()
@@ -22,11 +30,13 @@ export default function RaidPanel() {
   const [manual, setManual] = useState(false) // 用户手动收起/展开后不再自动切换
   const busyRef = useRef(false)
   const logRef = useRef<HTMLDivElement>(null)
+  const chatRef = useRef<HTMLDivElement>(null)
 
   const status = useRaid.getState().status
   const raidId = raid?.id
   const raidStatus = raid?.status
   const logLength = raid?.log.length ?? 0
+  const chatLength = raid?.chat.length ?? 0
 
   // 副本进行中自动展开、结束后自动收起（用户手动操作过则尊重用户选择）
   useEffect(() => {
@@ -54,12 +64,17 @@ export default function RaidPanel() {
     }
   }, [raidId, raidStatus, tick])
 
-  // 展开时副本记录自动滚到底部
+  // 记录/聊天追加时自动滚到底部
   useEffect(() => {
     if (open && logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight
     }
   }, [open, logLength])
+  useEffect(() => {
+    if (open && chatRef.current) {
+      chatRef.current.scrollTop = chatRef.current.scrollHeight
+    }
+  }, [open, chatLength])
 
   if (status !== 'idle' || !raid) return null
 
@@ -113,9 +128,9 @@ export default function RaidPanel() {
     )
   }
 
-  // ---- 展开态：右侧悬浮侧栏 ----
+  // ---- 展开态：右侧悬浮侧栏（功能分块） ----
   return (
-    <div className="fixed right-4 top-20 z-40 max-h-[85vh] w-80 space-y-4 overflow-y-auto rounded-xl bg-white p-4 shadow-lg ring-1 ring-neutral-200">
+    <div className="fixed right-4 top-20 z-40 max-h-[85vh] w-[420px] space-y-5 overflow-y-auto rounded-xl bg-white p-5 shadow-lg ring-1 ring-neutral-200">
       {/* 头部：副本名 + 状态 + 收起 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -146,18 +161,32 @@ export default function RaidPanel() {
         </button>
       </div>
 
-      <div className="space-y-1 text-sm text-neutral-600">
-        <p>
-          步数 {raid.steps.done}/{raid.steps.total}
-          <span className="mx-2 text-neutral-300">|</span>
-          进度 {raid.progress.killed}/{raid.progress.total}
-        </p>
-        {raid.status === '进行中' && (
-          <p className="text-amber-600">剩余重试 {raid.retries_left} 次</p>
-        )}
+      {/* 基本信息 */}
+      <div>
+        <SectionTitle>基本信息</SectionTitle>
+        <div className="grid grid-cols-3 gap-2 text-center text-sm">
+          <div className="rounded-lg bg-neutral-50 py-1.5">
+            <p className="text-xs text-neutral-400">步数</p>
+            <p className="font-medium">
+              {raid.steps.done}/{raid.steps.total}
+            </p>
+          </div>
+          <div className="rounded-lg bg-neutral-50 py-1.5">
+            <p className="text-xs text-neutral-400">进度</p>
+            <p className="font-medium">
+              {raid.progress.killed}/{raid.progress.total}
+            </p>
+          </div>
+          <div className="rounded-lg bg-neutral-50 py-1.5">
+            <p className="text-xs text-neutral-400">剩余重试</p>
+            <p className="font-medium text-amber-600">{raid.retries_left}</p>
+          </div>
+        </div>
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>
+      )}
 
       {raid.status === '已失败' && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
@@ -170,29 +199,51 @@ export default function RaidPanel() {
         </p>
       )}
 
+      {/* 当前 BOSS / 推进 */}
       {raid.status === '进行中' && raid.current_boss && (
-        <div className="rounded-lg bg-neutral-50 p-3">
-          <p className="text-sm font-medium">当前 BOSS：{raid.current_boss.name}</p>
-          <p className="mt-0.5 text-xs text-neutral-500">
-            要求装等 {raid.current_boss.gear_req} · 掉落 {raid.current_boss.drop_low}~
-            {raid.current_boss.drop_high}
-          </p>
-          <p className="mt-2 text-xs text-neutral-400">开发阶段：每 10 秒自动推进一步</p>
-          <button
-            className="mt-2 w-full rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-200 disabled:opacity-50"
-            onClick={() => void handleTick()}
-            disabled={ticking}
-          >
-            {ticking ? '推进中…' : '推进一步'}
-          </button>
+        <div>
+          <SectionTitle>当前 BOSS</SectionTitle>
+          <div className="rounded-lg bg-neutral-50 p-3">
+            <p className="text-sm font-medium">{raid.current_boss.name}</p>
+            <p className="mt-0.5 text-xs text-neutral-500">
+              要求装等 {raid.current_boss.gear_req} · 掉落 {raid.current_boss.drop_low}~
+              {raid.current_boss.drop_high}
+            </p>
+            <p className="mt-2 text-xs text-neutral-400">开发阶段：每 10 秒自动推进一步</p>
+            <button
+              className="mt-2 w-full rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-200 disabled:opacity-50"
+              onClick={() => void handleTick()}
+              disabled={ticking}
+            >
+              {ticking ? '推进中…' : '推进一步'}
+            </button>
+          </div>
         </div>
       )}
 
+      {/* 团队聊天 */}
+      {raid.chat.length > 0 && (
+        <div>
+          <SectionTitle>团队聊天</SectionTitle>
+          <div
+            ref={chatRef}
+            className="max-h-44 space-y-1.5 overflow-y-auto rounded-lg bg-sky-50/60 p-2.5"
+          >
+            {raid.chat.map((c, i) => (
+              <p key={i} className="text-xs leading-relaxed text-neutral-700">
+                <span className="mr-2 font-mono text-neutral-400">{c.time}</span>
+                <span className="font-medium text-neutral-900">{c.member}：</span>
+                {c.message}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 副本记录 */}
       {raid.log.length > 0 && (
         <div>
-          <p className="mb-1 text-xs font-medium text-neutral-500">
-            副本记录（{raid.log.length}）
-          </p>
+          <SectionTitle>副本记录</SectionTitle>
           <div
             ref={logRef}
             className="max-h-52 space-y-1 overflow-y-auto rounded-lg bg-neutral-50 p-2.5"
@@ -207,11 +258,10 @@ export default function RaidPanel() {
         </div>
       )}
 
+      {/* 掉落装备 */}
       {raid.drops.length > 0 && (
         <div>
-          <p className="mb-1 text-xs font-medium text-neutral-500">
-            掉落装备（{raid.drops.length} 件）
-          </p>
+          <SectionTitle>掉落装备（{raid.drops.length} 件）</SectionTitle>
           <div className="flex flex-wrap gap-1">
             {raid.drops.map((d) => (
               <span
@@ -225,8 +275,9 @@ export default function RaidPanel() {
         </div>
       )}
 
+      {/* 进本成员 */}
       <div>
-        <p className="mb-1 text-xs font-medium text-neutral-500">进本成员（{raid.members.length}）</p>
+        <SectionTitle>进本成员（{raid.members.length}）</SectionTitle>
         <div className="flex flex-wrap gap-1">
           {raid.members.map((m) => (
             <span

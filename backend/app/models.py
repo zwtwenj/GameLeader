@@ -201,6 +201,8 @@ class Raid(Base):
     node_index: Mapped[int] = mapped_column(default=0, nullable=False)  # 时间线游标（已完成节点数）
     retries_left: Mapped[int] = mapped_column(default=5, nullable=False)  # 共享重试次数
     log: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)  # 副本记录
+    # 团队聊天（JSON）：后端定时调 jx3api 骚话接口、随机成员播报，前端只展示
+    chat: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # 玩家已点解散（结算查看完毕）：置位后 /current 不再返回，面板从页面消失

@@ -43,6 +43,12 @@ export interface RaidLogEntry {
   time: string
 }
 
+export interface RaidChatEntry {
+  member: string
+  message: string
+  time: string
+}
+
 export interface BossOddsInfo {
   seq: number
   name: string
@@ -72,6 +78,7 @@ export interface RaidInfo {
   retries_left: number
   current_boss: RaidBossInfo | null
   log: RaidLogEntry[]
+  chat: RaidChatEntry[]
   members: RaidMemberInfo[]
   drops: RaidDropInfo[]
 }

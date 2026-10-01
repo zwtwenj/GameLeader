@@ -6,3 +6,4 @@ aiomysql
 cryptography
 pyjwt
 bcrypt
+httpx
