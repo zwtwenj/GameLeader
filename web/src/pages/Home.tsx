@@ -20,8 +20,8 @@ export default function Home({ user }: { user: { id: number; username: string } 
   return (
     <div className="min-h-screen">
       <header className="border-b border-neutral-200 bg-white">
-        <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-3">
-          <span className="font-semibold">游戏会长</span>
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+          <span className="font-semibold">我是团长</span>
           <div className="flex items-center gap-3 text-sm">
             <span className="text-neutral-500">{user.username}</span>
             <button

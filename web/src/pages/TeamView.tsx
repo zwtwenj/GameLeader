@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/client'
-import type { MemberDetailInfo, MemberInfo, RecruitOfferInfo, TeamInfo } from '../stores/team'
+import type {
+  MemberDetailInfo,
+  MemberInfo,
+  RecruitOfferInfo,
+  TeamInfo,
+} from '../stores/team'
 import { useTeam } from '../stores/team'
 import { useRaid } from '../stores/raid'
 import RaidPanel from './RaidPanel'
@@ -35,6 +40,7 @@ export default function TeamView({ team }: { team: TeamInfo }) {
   }, [load, loadRaid])
 
   const full = team.members.length >= team.member_cap
+  const leader = team.members.find((m) => m.id === team.leader_member_id)
 
   async function handleRecruit() {
     if (recruiting) return
@@ -67,39 +73,41 @@ export default function TeamView({ team }: { team: TeamInfo }) {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-10">
+    <div className="mx-auto max-w-6xl px-4 py-8">
+      {/* 团队信息卡：团牌 + 货币/资源统计 + 操作 */}
       <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-neutral-200">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold">{team.name}</h1>
-            <p className="mt-1 text-sm text-neutral-500">
-              团队资金：{team.fund}
-              <span className="mx-2 text-neutral-300">|</span>
-              五行石：{team.wuxing_stone}
-            </p>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-baseline gap-3">
+            <h1 className="text-2xl font-semibold">{team.name}</h1>
+            {leader && <span className="text-sm text-neutral-500">团长：{leader.name}</span>}
           </div>
-          <div className="flex flex-col items-end gap-1.5">
-            <p className="text-sm text-neutral-500">
-              成员 {team.members.length}/{team.member_cap}
-            </p>
-            <div className="flex gap-2">
+          <div className="flex gap-2">
+            <button
+              className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
+              onClick={() => void handleRecruit()}
+              disabled={recruiting || full}
+            >
+              {recruiting ? '刷新中…' : full ? '成员已满' : '招募'}
+            </button>
+            {!raidActive && (
               <button
-                className="rounded-lg bg-neutral-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
-                onClick={() => void handleRecruit()}
-                disabled={recruiting || full}
+                className="rounded-lg border border-neutral-900 px-4 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-100"
+                onClick={() => setShowRaidModal(true)}
               >
-                {recruiting ? '刷新中…' : full ? '成员已满' : '招募'}
+                开团
               </button>
-              {!raidActive && (
-                <button
-                  className="rounded-lg border border-neutral-900 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-neutral-100"
-                  onClick={() => setShowRaidModal(true)}
-                >
-                  开团
-                </button>
-              )}
-            </div>
+            )}
           </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="团队资金" value={String(team.fund)} />
+          <Stat label="五行石" value={String(team.wuxing_stone)} accent />
+          <Stat
+            label="成员"
+            value={`${team.members.length}/${team.member_cap}`}
+          />
+          <Stat label="副本状态" value={raidActive ? '进行中' : '空闲'} />
         </div>
       </div>
 
@@ -149,8 +157,13 @@ export default function TeamView({ team }: { team: TeamInfo }) {
         </div>
       )}
 
-      <h2 className="mt-8 mb-3 text-sm font-medium text-neutral-600">成员</h2>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="mt-8 mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-medium text-neutral-600">成员</h2>
+        <span className="text-xs text-neutral-400">
+          点击成员卡可查看装备详情 / 切换心法
+        </span>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {team.members.map((m) => (
           <MemberCard
             key={m.id}
@@ -160,9 +173,30 @@ export default function TeamView({ team }: { team: TeamInfo }) {
         ))}
       </div>
 
-      {showRaidModal && team && (
-        <RaidModal team={team} onClose={() => setShowRaidModal(false)} />
-      )}
+      {showRaidModal && <RaidModal team={team} onClose={() => setShowRaidModal(false)} />}
+    </div>
+  )
+}
+
+function Stat({
+  label,
+  value,
+  accent = false,
+}: {
+  label: string
+  value: string
+  accent?: boolean
+}) {
+  return (
+    <div className="rounded-lg bg-neutral-50 px-3 py-2">
+      <p className="text-xs text-neutral-400">{label}</p>
+      <p
+        className={
+          'mt-0.5 text-lg font-semibold ' + (accent ? 'text-violet-600' : 'text-neutral-900')
+        }
+      >
+        {value}
+      </p>
     </div>
   )
 }
