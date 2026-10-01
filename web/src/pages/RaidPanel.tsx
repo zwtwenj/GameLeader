@@ -16,11 +16,13 @@ function Section({
   title,
   count,
   bodyClass,
+  bodyRef,
   children,
 }: {
   title: string
   count?: number
   bodyClass: string
+  bodyRef?: React.RefObject<HTMLDivElement | null>
   children: ReactNode
 }) {
   return (
@@ -29,7 +31,9 @@ function Section({
         <span className="text-xs font-medium text-neutral-500">{title}</span>
         {count !== undefined && <span className="text-xs text-neutral-400">{count}</span>}
       </div>
-      <div className={`px-2.5 py-2 ${bodyClass}`}>{children}</div>
+      <div ref={bodyRef} className={`overflow-y-auto px-2.5 py-2 ${bodyClass}`}>
+        {children}
+      </div>
     </div>
   )
 }
@@ -245,34 +249,40 @@ export default function RaidPanel() {
 
       {/* 副本记录 + 团队聊天：固定高度双栏 */}
       <div className="grid grid-cols-2 gap-3">
-        <Section title="副本记录" count={raid.log.length} bodyClass="h-44">
-          <div ref={logRef} className="space-y-1">
-            {raid.log.length === 0 ? (
-              <EmptyHint />
-            ) : (
-              raid.log.map((entry, i) => (
-                <p key={i} className="text-xs leading-relaxed text-neutral-700">
-                  <span className="mr-1.5 font-mono text-neutral-400">{entry.time}</span>
-                  {entry.message}
-                </p>
-              ))
-            )}
-          </div>
+        <Section
+          title="副本记录"
+          count={raid.log.length}
+          bodyClass="h-44"
+          bodyRef={logRef}
+        >
+          {raid.log.length === 0 ? (
+            <EmptyHint />
+          ) : (
+            raid.log.map((entry, i) => (
+              <p key={i} className="text-xs leading-relaxed text-neutral-700">
+                <span className="mr-1.5 font-mono text-neutral-400">{entry.time}</span>
+                {entry.message}
+              </p>
+            ))
+          )}
         </Section>
-        <Section title="团队聊天" count={raid.chat.length} bodyClass="h-44 bg-sky-50/60">
-          <div ref={chatRef} className="space-y-1.5">
-            {raid.chat.length === 0 ? (
-              <EmptyHint text="副本进行中，成员们会在这里聊天" />
-            ) : (
-              raid.chat.map((c, i) => (
-                <p key={i} className="text-xs leading-relaxed text-neutral-700">
-                  <span className="mr-1.5 font-mono text-neutral-400">{c.time}</span>
-                  <span className="font-medium text-neutral-900">{c.member}：</span>
-                  {c.message}
-                </p>
-              ))
-            )}
-          </div>
+        <Section
+          title="团队聊天"
+          count={raid.chat.length}
+          bodyClass="h-44 bg-sky-50/60"
+          bodyRef={chatRef}
+        >
+          {raid.chat.length === 0 ? (
+            <EmptyHint text="副本进行中，成员们会在这里聊天" />
+          ) : (
+            raid.chat.map((c, i) => (
+              <p key={i} className="text-xs leading-relaxed text-neutral-700">
+                <span className="mr-1.5 font-mono text-neutral-400">{c.time}</span>
+                <span className="font-medium text-neutral-900">{c.member}：</span>
+                {c.message}
+              </p>
+            ))
+          )}
         </Section>
       </div>
 
