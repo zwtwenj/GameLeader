@@ -21,6 +21,7 @@ from .models import (
     EquipmentItem,
     Item,
     Member,
+    Sect,
     TeamItem,
     Xinfa,
 )
@@ -154,8 +155,13 @@ async def craft_equipment(
     if team is None:
         raise ApiError(404, 40400, "还没有团队")
     if body.slot == "武器":
-        raise ApiError(409, 40900, "武器制作暂未开放")
-    if body.equip_type not in EQUIP_TYPES:
+        # 武器制作：equip_type 为门派名（武器按门派专属）
+        sect = (
+            await db.execute(select(Sect).where(Sect.name == body.equip_type))
+        ).scalar_one_or_none()
+        if sect is None:
+            raise ApiError(422, 42200, "门派无效")
+    elif body.equip_type not in EQUIP_TYPES:
         raise ApiError(422, 42200, "属性类型无效")
 
     tier = await db.get(CraftTier, body.tier_id)
@@ -252,7 +258,7 @@ async def assign_warehouse_item(
                 f"成员当前为{xinfa.equip_type}装备，与这件{item.equip_type}装备不符",
             )
 
-        col = SLOT_TO_COLUMN.get(item.slot)
+        col = "weapon" if item.slot == "武器" else SLOT_TO_COLUMN.get(item.slot)
         if col is None:
             raise ApiError(422, 42200, "未知的装备槽位")
         if getattr(member, f"{col}_level") >= item.equip_level:

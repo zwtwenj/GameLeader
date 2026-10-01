@@ -138,7 +138,6 @@ export default function CraftModal({ onClose }: { onClose: () => void }) {
                   key={s}
                   label={s}
                   active={slot === s}
-                  disabled={s === '武器'}
                   onClick={() => {
                     setSlot(s)
                     setEquipType(null)
@@ -163,7 +162,7 @@ export default function CraftModal({ onClose }: { onClose: () => void }) {
               </>
             )}
 
-            {slot === '武器' && (
+            {slot !== null && isWeapon && (
               <>
                 <p className="mb-2 text-xs font-medium text-neutral-400">门派（武器专属）</p>
                 <div className="mb-4 flex flex-wrap gap-2">
