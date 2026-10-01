@@ -30,10 +30,8 @@ export interface RaidMemberInfo {
 
 export interface RaidDropInfo {
   id: number
-  desc: string
-  slot: string
-  equip_type: string
-  equip_level: number
+  /** 如："王海银掉落了130装等外功帽子，分配给陈三百" */
+  text: string
 }
 
 export interface RaidLogEntry {

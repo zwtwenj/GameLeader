@@ -236,5 +236,6 @@ class EquipmentItem(Base):
     equip_type: Mapped[str] = mapped_column(String(4), nullable=False)
     equip_level: Mapped[int] = mapped_column(nullable=False)
     status: Mapped[str] = mapped_column(String(8), default="待竞拍", nullable=False)
+    boss_name: Mapped[str] = mapped_column(String(32), default="", nullable=False)  # 掉落它的 BOSS
     owner_member_id: Mapped[int | None] = mapped_column(default=None, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

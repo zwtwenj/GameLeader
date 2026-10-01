@@ -246,6 +246,7 @@ async def create_drop_item(ctx: NodeContext, boss: Boss, weapon: bool) -> Equipm
         slot=slot,
         equip_type=equip_type,
         equip_level=random.randint(boss.drop_low, boss.drop_high),
+        boss_name=boss.name,
     )
     ctx.db.add(item)
     await ctx.db.flush()
@@ -256,8 +257,7 @@ async def assign_or_decompose(ctx: NodeContext, item: EquipmentItem) -> str:
     """为掉落物寻找符合的成员随机分配（分配即穿），无人符合则分解为五行石。
 
     符合 = 成员当前属性与装备属性重合（按心法的装备分类；武器按门派），
-    且成员该部位装等比这件装备差。返回用于战报的结果描述。"""
-    desc = item_desc(item)
+    且成员该部位装等比这件装备差。返回去向描述："分配给XX" / "已分解为五行石"。"""
     eligible: list[tuple[Member, str]] = []  # (成员, 槽位字段)
     for m, x, s in ctx.members:
         if item.slot == "武器":
@@ -285,14 +285,14 @@ async def assign_or_decompose(ctx: NodeContext, item: EquipmentItem) -> str:
     if not eligible:
         item.status = "已分解"
         ctx.team.wuxing_stone += 1
-        return f"{desc}→分解为五行石"
+        return "已分解为五行石"
 
     m, col = random.choice(eligible)
     setattr(m, f"{col}_level", item.equip_level)
     m.sync_equip_level()
     item.status = "已分配"
     item.owner_member_id = m.id
-    return f"{desc}→{m.name}"
+    return f"分配给{m.name}"
 
 
 async def handle_fight_end(ctx: NodeContext, params: dict) -> NodeOutcome:
@@ -325,19 +325,21 @@ async def handle_fight_end(ctx: NodeContext, params: dict) -> NodeOutcome:
         )
 
     # 3+1 掉落：必掉 3 件部位装备，50% 概率额外 1 把门派武器
-    results: list[str] = []
+    entries: list[str] = []
     drops: list[str] = []
     drop_plan = [False, False, False]
     if random.random() < WEAPON_DROP_CHANCE:
         drop_plan.append(True)
     for weapon in drop_plan:
         item = await create_drop_item(ctx, boss, weapon)
-        results.append(await assign_or_decompose(ctx, item))
-        drops.append(item_desc(item))
+        verdict = await assign_or_decompose(ctx, item)
+        desc = item_desc(item)
+        entries.append(f"{desc}，{verdict}")
+        drops.append(f"{boss.name}掉落了{desc}，{verdict}")
     ctx.raid.current_seq = max(ctx.raid.current_seq, boss.seq + 1)
     return NodeOutcome(
         advance=True,
-        message=f"BOSS{boss.name}被打倒了，掉落了{'、'.join(results)}（胜率 {pct_text}）",
+        message=f"BOSS{boss.name}被打倒了，掉落了{'、'.join(entries)}（胜率 {pct_text}）",
         drops=drops,
         stats=stats,
     )
@@ -477,9 +479,12 @@ async def raid_payload(db: AsyncSession, raid: Raid) -> dict:
     ).all()
     drops = (
         await db.execute(
-            select(EquipmentItem).where(EquipmentItem.raid_id == raid.id)
+            select(EquipmentItem, Member)
+            .join(Member, EquipmentItem.owner_member_id == Member.id, isouter=True)
+            .where(EquipmentItem.raid_id == raid.id)
+            .order_by(EquipmentItem.id)
         )
-    ).scalars().all()
+    ).all()
 
     timeline = json.loads(dungeon.timeline or "[]")
     current_boss = None
@@ -518,9 +523,12 @@ async def raid_payload(db: AsyncSession, raid: Raid) -> dict:
             for rm, x, s in rows
         ],
         "drops": [
-            {"id": it.id, "desc": item_desc(it), "slot": it.slot,
-             "equip_type": it.equip_type, "equip_level": it.equip_level}
-            for it in drops
+            {
+                "id": it.id,
+                "text": f"{it.boss_name}掉落了{item_desc(it)}，"
+                + (f"分配给{m.name}" if m is not None else "已分解为五行石"),
+            }
+            for it, m in drops
         ],
     }
 

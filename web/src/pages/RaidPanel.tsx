@@ -292,14 +292,11 @@ export default function RaidPanel() {
           {raid.drops.length === 0 ? (
             <EmptyHint text="击败 BOSS 后掉落" />
           ) : (
-            <div className="flex flex-wrap gap-1">
+            <div className="space-y-1">
               {raid.drops.map((d) => (
-                <span
-                  key={d.id}
-                  className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700"
-                >
-                  {d.desc}
-                </span>
+                <p key={d.id} className="text-xs leading-relaxed text-neutral-700">
+                  {d.text}
+                </p>
               ))}
             </div>
           )}
