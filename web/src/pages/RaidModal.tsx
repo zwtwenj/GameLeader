@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/client'
 import type { TeamInfo } from '../stores/team'
+import { useTeam } from '../stores/team'
 import { useRaid } from '../stores/raid'
 import { MemberCard } from './TeamView'
 
@@ -57,7 +58,7 @@ export default function RaidModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-lg">
+      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">开团 {step === 1 ? '· 选择副本' : '· 选择成员'}</h2>
           <button className="text-sm text-neutral-400 hover:text-neutral-900" onClick={onClose}>
@@ -134,7 +135,8 @@ export default function RaidModal({
               （已选 <span className={selected.size === dungeon.size ? 'text-emerald-600' : 'text-red-500'}>{selected.size}</span>
               /{dungeon.size}），可先查看装备、切换心法
             </p>
-            <div className="grid max-h-96 gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+            <SelectedComposition team={team} selected={selected} />
+            <div className="grid gap-3 sm:grid-cols-2">
               {team.members.map((m) => {
                 const locked = m.in_raid_id !== null
                 return (
@@ -200,6 +202,38 @@ export default function RaidModal({
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/** 已选成员的构成统计：职业类型（坦克/治疗/输出）与功法（外功/内功）。 */
+function SelectedComposition({
+  team,
+  selected,
+}: {
+  team: TeamInfo
+  selected: Set<number>
+}) {
+  const chosen = team.members.filter((m) => selected.has(m.id))
+  const counts: Record<string, number> = { 坦克: 0, 治疗: 0, 输出: 0, 外功: 0, 内功: 0 }
+  for (const m of chosen) {
+    if (m.role in counts) counts[m.role]++
+    const xinfa = useTeam
+      .getState()
+      .sects.find((s) => s.name === m.sect)
+      ?.xinfas.find((x) => x.name === m.xinfa)
+    if (xinfa && (xinfa.equip_type === '外功' || xinfa.equip_type === '内功'))
+      counts[xinfa.equip_type]++
+  }
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-neutral-50 px-3 py-2 text-sm">
+      <span className="text-xs text-neutral-400">已选构成</span>
+      <span className="text-sky-700">坦克 {counts['坦克']}</span>
+      <span className="text-emerald-700">治疗 {counts['治疗']}</span>
+      <span className="text-red-700">输出 {counts['输出']}</span>
+      <span className="text-neutral-300">|</span>
+      <span className="text-amber-700">外功 {counts['外功']}</span>
+      <span className="text-violet-700">内功 {counts['内功']}</span>
     </div>
   )
 }
