@@ -16,6 +16,7 @@ export interface TeamInfo {
   id: number
   name: string
   fund: number
+  wuxing_stone: number
   member_cap: number
   leader_member_id: number | null
   members: MemberInfo[]

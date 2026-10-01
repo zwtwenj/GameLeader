@@ -77,6 +77,7 @@ class Team(Base):
         ForeignKey("member.id", use_alter=True), nullable=True
     )
     fund: Mapped[int] = mapped_column(default=0, nullable=False)  # 团队资金
+    wuxing_stone: Mapped[int] = mapped_column(default=0, nullable=False)  # 五行石（装备分解产物，团队货币）
     member_cap: Mapped[int] = mapped_column(default=40, nullable=False)  # 成员上限
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

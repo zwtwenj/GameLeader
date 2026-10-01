@@ -1,12 +1,17 @@
 """副本实例路由：开团（进本）、推进时间线（tick）、解散、查询当前实例。
 
-时间线状态机：当前节点执行返回 true → 游标进下一个节点；返回 false →
-原地重试（消耗全副本共享的重试次数，耗尽则副本失败散团）。副本记录（log）
-随每次推进追加，开发阶段前端按 10 秒/步调用 tick。
-"""
+时间线状态机：统一分发器（NODE_HANDLERS）按 event 调用各 handler 子函数，
+每个节点执行返回 true → 游标进下一个节点；false → 原地重试（消耗全副本
+共享的重试次数，耗尽则副本失败散团）。副本记录（log）随每次推进追加，
+开发阶段前端按 10 秒/步调用 tick。
+
+掉落（fight_end 胜利后）：3+1 —— 必掉 3 件部位装备（分类随机）+ 50% 概率
+额外掉 1 把随机门派武器。每件掉落立即尝试分配给"当前属性重合且该部位
+更差"的随机成员（分配即穿，不落库待竞拍）；无人符合则分解为五行石。"""
 
 import json
 import random
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
@@ -37,6 +42,20 @@ from .models import (
 router = APIRouter(prefix="/api/raid", tags=["raid"])
 
 MAX_RETRIES = 5  # 共享战斗重试次数（全副本所有 BOSS 共享）
+WEAPON_DROP_CHANCE = 0.5  # 击败 BOSS 后额外掉落武器的概率（3+1 掉落的"1"）
+
+# 掉落部位 → 成员装备槽字段（戒指两个槽位特殊处理，武器按门派匹配）
+SLOT_TO_COLUMN = {
+    "帽子": "hat",
+    "上衣": "chest",
+    "腰带": "belt",
+    "护腕": "wrist",
+    "下装": "pants",
+    "鞋子": "shoes",
+    "项链": "necklace",
+    "腰坠": "pendant",
+    "远程武器": "ranged",
+}
 
 
 def decide_battle(
@@ -77,12 +96,185 @@ def decide_battle(
     return win, round(probability, 4), round(base, 4), penalties
 
 
+# ---------- 时间线节点：统一分发器 + 各事件 handler ----------
+
+
+@dataclass
+class NodeContext:
+    """单个节点执行时的上下文（快照数据，节点内只读）。"""
+
+    db: AsyncSession
+    team: Team
+    raid: Raid
+    dungeon: Dungeon
+    roles: list[str]  # 进本成员的职业类型（快照）
+    avg_gear: float  # 进本成员平均装等（快照）
+    members: list[tuple[Member, Xinfa, Sect]]  # 团队存活成员（分配掉落用）
+    sect_names: list[str]  # 全部门派名（武器掉落用）
+
+
+@dataclass
+class NodeOutcome:
+    """节点执行结果：advance=true 进下一个节点，false 原地重试。"""
+
+    advance: bool
+    message: str
+    drops: list[str] = field(default_factory=list)
+    stats: dict = field(default_factory=dict)
+
+
+async def _get_boss(ctx: NodeContext, params: dict) -> Boss:
+    boss = await ctx.db.get(Boss, params.get("boss_id", 0))
+    if boss is None:
+        raise ApiError(
+            422, 42200, f"时间线节点引用了不存在的BOSS（boss_id={params.get('boss_id')}）"
+        )
+    return boss
+
+
+async def handle_mob(ctx: NodeContext, params: dict) -> NodeOutcome:
+    return NodeOutcome(advance=True, message="正在清理路上的小怪")
+
+
+async def handle_advance(ctx: NodeContext, params: dict) -> NodeOutcome:
+    return NodeOutcome(advance=True, message="正在赶往BOSS位置")
+
+
+async def handle_rest(ctx: NodeContext, params: dict) -> NodeOutcome:
+    return NodeOutcome(advance=True, message="队伍原地休整，恢复状态")
+
+
+async def handle_fight(ctx: NodeContext, params: dict) -> NodeOutcome:
+    boss = await _get_boss(ctx, params)
+    return NodeOutcome(advance=True, message=f"正在与{boss.name}作战")
+
+
+async def create_drop_item(ctx: NodeContext, boss: Boss, weapon: bool) -> EquipmentItem:
+    """生成一件掉落：部位装备（随机槽位+分类）或门派武器，装等在 BOSS 区间内。"""
+    if weapon:
+        slot, equip_type = "武器", random.choice(ctx.sect_names)
+    else:
+        slot, equip_type = random.choice(DROP_SLOTS), random.choice(DROP_TYPES)
+    item = EquipmentItem(
+        team_id=ctx.team.id,
+        raid_id=ctx.raid.id,
+        slot=slot,
+        equip_type=equip_type,
+        equip_level=random.randint(boss.drop_low, boss.drop_high),
+    )
+    ctx.db.add(item)
+    await ctx.db.flush()
+    return item
+
+
+async def assign_or_decompose(ctx: NodeContext, item: EquipmentItem) -> str:
+    """为掉落物寻找符合的成员随机分配（分配即穿），无人符合则分解为五行石。
+
+    符合 = 成员当前属性与装备属性重合（按心法的装备分类；武器按门派），
+    且成员该部位装等比这件装备差。返回用于战报的结果描述。"""
+    desc = item_desc(item)
+    eligible: list[tuple[Member, str]] = []  # (成员, 槽位字段)
+    for m, x, s in ctx.members:
+        if item.slot == "武器":
+            if s.name == item.equip_type and m.weapon_level < item.equip_level:
+                eligible.append((m, "weapon"))
+        elif item.slot == "戒指":
+            if x.equip_type == item.equip_type:
+                worse = [
+                    c
+                    for c in ("ring1", "ring2")
+                    if getattr(m, f"{c}_level") < item.equip_level
+                ]
+                if worse:
+                    col = min(worse, key=lambda c: getattr(m, f"{c}_level"))
+                    eligible.append((m, col))
+        else:
+            col = SLOT_TO_COLUMN.get(item.slot)
+            if (
+                col
+                and x.equip_type == item.equip_type
+                and getattr(m, f"{col}_level") < item.equip_level
+            ):
+                eligible.append((m, col))
+
+    if not eligible:
+        item.status = "已分解"
+        ctx.team.wuxing_stone += 1
+        return f"{desc}→分解为五行石"
+
+    m, col = random.choice(eligible)
+    setattr(m, f"{col}_level", item.equip_level)
+    m.sync_equip_level()
+    item.status = "已分配"
+    item.owner_member_id = m.id
+    return f"{desc}→{m.name}"
+
+
+async def handle_fight_end(ctx: NodeContext, params: dict) -> NodeOutcome:
+    boss = await _get_boss(ctx, params)
+    win, probability, base, penalties = decide_battle(
+        boss, ctx.avg_gear, ctx.roles, ctx.dungeon
+    )
+    pct_text = f"{probability:.0%}"
+    stats = {
+        "probability": probability,
+        "base": base,
+        "penalties": penalties,
+        "avg_gear": ctx.avg_gear,
+    }
+
+    if not win:
+        ctx.raid.retries_left -= 1
+        if ctx.raid.retries_left <= 0:
+            ctx.raid.status = "已失败"
+            ctx.raid.finished_at = datetime.now()
+            return NodeOutcome(
+                False,
+                f"队伍被团灭了（胜率 {pct_text}），重试次数耗尽，散团了",
+                stats=stats,
+            )
+        return NodeOutcome(
+            False,
+            f"队伍被团灭了（胜率 {pct_text}，剩余重试 {ctx.raid.retries_left} 次），重新集结进攻",
+            stats=stats,
+        )
+
+    # 3+1 掉落：必掉 3 件部位装备，50% 概率额外 1 把门派武器
+    results: list[str] = []
+    drops: list[str] = []
+    drop_plan = [False, False, False]
+    if random.random() < WEAPON_DROP_CHANCE:
+        drop_plan.append(True)
+    for weapon in drop_plan:
+        item = await create_drop_item(ctx, boss, weapon)
+        results.append(await assign_or_decompose(ctx, item))
+        drops.append(item_desc(item))
+    ctx.raid.current_seq = max(ctx.raid.current_seq, boss.seq + 1)
+    return NodeOutcome(
+        advance=True,
+        message=f"BOSS{boss.name}被打倒了，掉落了{'、'.join(results)}（胜率 {pct_text}）",
+        drops=drops,
+        stats=stats,
+    )
+
+
+NODE_HANDLERS = {
+    "mob": handle_mob,
+    "advance": handle_advance,
+    "rest": handle_rest,
+    "fight": handle_fight,
+    "fight_end": handle_fight_end,
+}
+
+
 class RaidCreateIn(BaseModel):
     dungeon_id: int
     member_ids: list[int] = Field(min_length=1, max_length=25)
 
 
 def item_desc(item: EquipmentItem) -> str:
+    if item.slot == "武器":
+        return f"{item.equip_level}{item.equip_type}武器"
     return f"{item.equip_level}装等{item.equip_type}{item.slot}"
 
 
@@ -258,10 +450,12 @@ async def tick_raid(
 ):
     """推进一个时间线节点：执行当前节点，返回 true 进下一个、false 原地重试。
 
-    事件语义（节点可人为编排，顺序不限）：
+    事件语义（节点可人为编排，顺序不限），每个 event 对应 NODE_HANDLERS 里的
+    一个 handler 子函数：
     mob=清理小怪 / advance=赶往BOSS / rest=休整 / fight=开战（params.boss_id）/
-    fight_end=结算（params.boss_id）：win→掉3件装备返回 true；lose→消耗重试
-    返回 false 原地重试，重试耗尽副本失败散团（不解散队伍，玩家手动解散）。"""
+    fight_end=结算（params.boss_id）：win→3+1 掉落（3 件部位装备 + 50% 门派武器，
+    逐件分配给符合的成员或分解为五行石）返回 true；lose→消耗重试返回 false
+    原地重试，重试耗尽副本失败散团（不解散队伍，玩家手动解散）。"""
     team = (
         await db.execute(select(Team).where(Team.user_id == user.id, Team.deleted_at.is_(None)))
     ).scalar_one_or_none()
@@ -290,9 +484,6 @@ async def tick_raid(
         node = timeline[raid.node_index]
         event = node.get("event")
         params = node.get("params") or {}
-        advance = True
-        drops_desc: list[str] = []
-        stats: dict = {}
 
         rows = (
             await db.execute(
@@ -305,54 +496,35 @@ async def tick_raid(
         roles = [x.role for _, x in rows]
         avg_gear = round(sum(rm.equip_level for rm in snapshots) / len(snapshots), 1) if snapshots else 0
 
-        if event == "mob":
-            message = "正在清理路上的小怪"
-        elif event == "advance":
-            message = "正在赶往BOSS位置"
-        elif event == "rest":
-            message = "队伍原地休整，恢复状态"
-        elif event == "fight":
-            boss = await db.get(Boss, params.get("boss_id", 0))
-            if boss is None:
-                raise ApiError(422, 42200, f"时间线节点引用了不存在的BOSS（boss_id={params.get('boss_id')}）")
-            message = f"正在与{boss.name}作战"
-        elif event == "fight_end":
-            boss = await db.get(Boss, params.get("boss_id", 0))
-            if boss is None:
-                raise ApiError(422, 42200, f"时间线节点引用了不存在的BOSS（boss_id={params.get('boss_id')}）")
-            win, probability, base, penalties = decide_battle(boss, avg_gear, roles, dungeon)
-            stats = {
-                "probability": probability,
-                "base": base,
-                "penalties": penalties,
-                "avg_gear": avg_gear,
-            }
-            pct_text = f"{probability:.0%}"
-            if win:
-                for _ in range(3):
-                    item = EquipmentItem(
-                        team_id=team.id,
-                        raid_id=raid.id,
-                        slot=random.choice(DROP_SLOTS),
-                        equip_type=random.choice(DROP_TYPES),
-                        equip_level=random.randint(boss.drop_low, boss.drop_high),
-                    )
-                    db.add(item)
-                    await db.flush()
-                    drops_desc.append(item_desc(item))
-                message = f"BOSS{boss.name}被打倒了，掉落了{'、'.join(drops_desc)}（胜率 {pct_text}）"
-                raid.current_seq = max(raid.current_seq, boss.seq + 1)
-            else:
-                advance = False
-                raid.retries_left -= 1
-                if raid.retries_left <= 0:
-                    message = f"队伍被团灭了（胜率 {pct_text}），重试次数耗尽，散团了"
-                    raid.status = "已失败"
-                    raid.finished_at = datetime.now()
-                else:
-                    message = f"队伍被团灭了（胜率 {pct_text}，剩余重试 {raid.retries_left} 次），重新集结进攻"
-        else:
-            message = f"未知事件 {event}，跳过"
+        team_members = (
+            await db.execute(
+                select(Member, Xinfa, Sect)
+                .join(Xinfa, Member.xinfa_id == Xinfa.id)
+                .join(Sect, Xinfa.sect_id == Sect.id)
+                .where(Member.team_id == team.id, Member.deleted_at.is_(None))
+                .order_by(Member.id)
+            )
+        ).all()
+        sect_names = [s for s, in (await db.execute(select(Sect.name))).all()]
+
+        ctx = NodeContext(
+            db=db,
+            team=team,
+            raid=raid,
+            dungeon=dungeon,
+            roles=roles,
+            avg_gear=avg_gear,
+            members=team_members,
+            sect_names=sect_names,
+        )
+        handler = NODE_HANDLERS.get(event)
+        outcome = (
+            await handler(ctx, params)
+            if handler is not None
+            else NodeOutcome(advance=True, message=f"未知事件 {event}，跳过")
+        )
+        advance, message = outcome.advance, outcome.message
+        drops_desc, stats = outcome.drops, outcome.stats
 
         if advance:
             raid.node_index += 1

@@ -119,6 +119,7 @@ async def my_team(
             "id": team.id,
             "name": team.name,
             "fund": team.fund,
+            "wuxing_stone": team.wuxing_stone,
             "member_cap": team.member_cap,
             "leader_member_id": team.leader_member_id,
             "members": [member_out(m, x, s.name) for m, x, s in rows],

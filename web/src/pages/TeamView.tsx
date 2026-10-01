@@ -72,7 +72,11 @@ export default function TeamView({ team }: { team: TeamInfo }) {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold">{team.name}</h1>
-            <p className="mt-1 text-sm text-neutral-500">团队资金：{team.fund}</p>
+            <p className="mt-1 text-sm text-neutral-500">
+              团队资金：{team.fund}
+              <span className="mx-2 text-neutral-300">|</span>
+              五行石：{team.wuxing_stone}
+            </p>
           </div>
           <div className="flex flex-col items-end gap-1.5">
             <p className="text-sm text-neutral-500">
