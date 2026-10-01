@@ -9,7 +9,6 @@ import type {
 } from '../stores/team'
 import { useTeam } from '../stores/team'
 import { useRaid } from '../stores/raid'
-import RaidPanel from './RaidPanel'
 import RaidModal from './RaidModal'
 
 const ROLE_BADGE: Record<string, string> = {
@@ -104,8 +103,6 @@ export default function TeamView({ team }: { team: TeamInfo }) {
       {error && (
         <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
-
-      <RaidPanel />
 
       {candidate && (
         <div className="mt-4 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">

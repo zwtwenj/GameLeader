@@ -11,17 +11,27 @@ const ROLE_BADGE: Record<string, string> = {
 
 const TICK_MS = 10_000 // 开发阶段：每 10 秒推进一步
 
-/** 副本实例面板：时间线推进（10 秒/步）+ 副本记录 + 掉落 + 解散。 */
+/** 副本悬浮窗：固定右侧，可收起（右缘竖排标签）/展开（完整副本信息侧栏）。
+ * 副本进行中默认展开；团队成员上方不再占用版面。 */
 export default function RaidPanel() {
   const { raid, tick, abandonRaid, load } = useRaid()
   const [abandoning, setAbandoning] = useState(false)
   const [ticking, setTicking] = useState(false)
   const [error, setError] = useState('')
+  const [open, setOpen] = useState(false)
+  const [manual, setManual] = useState(false) // 用户手动收起/展开后不再自动切换
   const busyRef = useRef(false)
+  const logRef = useRef<HTMLDivElement>(null)
 
   const status = useRaid.getState().status
   const raidId = raid?.id
   const raidStatus = raid?.status
+  const logLength = raid?.log.length ?? 0
+
+  // 副本进行中自动展开、结束后自动收起（用户手动操作过则尊重用户选择）
+  useEffect(() => {
+    if (!manual) setOpen(raidStatus === '进行中')
+  }, [raidStatus, manual])
 
   // 进行中每 10 秒自动推进一步
   useEffect(() => {
@@ -44,28 +54,23 @@ export default function RaidPanel() {
     }
   }, [raidId, raidStatus, tick])
 
-  if (status === 'loading') {
-    return <p className="mt-6 text-center text-sm text-neutral-400">加载副本信息…</p>
-  }
-  if (status === 'offline') {
-    return (
-      <div className="mt-6 rounded-xl bg-white p-6 text-center shadow-sm ring-1 ring-neutral-200">
-        <p className="text-sm text-neutral-600">副本信息暂不可用</p>
-        <button
-          className="mt-2 rounded bg-neutral-800 px-3 py-1.5 text-sm text-white hover:bg-neutral-700"
-          onClick={() => void load()}
-        >
-          重试
-        </button>
-      </div>
-    )
-  }
+  // 展开时副本记录自动滚到底部
+  useEffect(() => {
+    if (open && logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight
+    }
+  }, [open, logLength])
 
-  if (!raid) return null
+  if (status !== 'idle' || !raid) return null
 
   async function handleAbandon() {
     if (abandoning || !raid) return
-    if (!window.confirm(raid.status === '进行中' ? '确定解散本次副本？成员将全部解锁' : '确定解散队伍？成员将解锁')) return
+    if (
+      !window.confirm(
+        raid.status === '进行中' ? '确定解散本次副本？成员将全部解锁' : '确定解散队伍？成员将解锁',
+      )
+    )
+      return
     setError('')
     setAbandoning(true)
     try {
@@ -80,7 +85,7 @@ export default function RaidPanel() {
 
   async function handleTick() {
     if (busyRef.current || !raid || raid.status !== '进行中') return
-    busyRef.current = true
+    setError('')
     setTicking(true)
     try {
       await tick(raid.id)
@@ -93,12 +98,28 @@ export default function RaidPanel() {
     }
   }
 
+  // ---- 收起态：右缘竖排标签 ----
+  if (!open) {
+    return (
+      <button
+        className="fixed right-0 top-1/3 z-40 rounded-l-lg bg-neutral-900/90 px-1.5 py-4 text-xs tracking-widest text-white [writing-mode:vertical-rl] hover:bg-neutral-800"
+        onClick={() => {
+          setManual(true)
+          setOpen(true)
+        }}
+      >
+        副本 {raid.steps.done}/{raid.steps.total}
+      </button>
+    )
+  }
+
+  // ---- 展开态：右侧悬浮侧栏 ----
   return (
-    <>
-      <div className="mt-4 rounded-xl bg-white p-6 shadow-sm ring-1 ring-neutral-200">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold">{raid.dungeon.name}</h2>
+    <div className="fixed right-4 top-20 z-40 max-h-[85vh] w-80 space-y-4 overflow-y-auto rounded-xl bg-white p-4 shadow-lg ring-1 ring-neutral-200">
+      {/* 头部：副本名 + 状态 + 收起 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <h2 className="font-semibold">{raid.dungeon.name}</h2>
           <span
             className={
               'rounded px-1.5 py-0.5 text-xs ' +
@@ -106,50 +127,59 @@ export default function RaidPanel() {
                 ? 'bg-blue-100 text-blue-700'
                 : raid.status === '已通关'
                   ? 'bg-emerald-100 text-emerald-700'
-                  : 'bg-red-100 text-red-700')
+                  : raid.status === '已失败'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-neutral-100 text-neutral-600')
             }
           >
             {raid.status}
           </span>
         </div>
-        <div className="flex items-center gap-3 text-sm text-neutral-500">
-          <span>
-            步数 {raid.steps.done}/{raid.steps.total}
-          </span>
-          <span>
-            进度 {raid.progress.killed}/{raid.progress.total}
-          </span>
-          {raid.status === '进行中' && (
-            <span className="text-amber-600">剩余重试 {raid.retries_left}</span>
-          )}
-        </div>
+        <button
+          className="text-xs text-neutral-400 hover:text-neutral-900"
+          onClick={() => {
+            setManual(true)
+            setOpen(false)
+          }}
+        >
+          收起
+        </button>
       </div>
 
-      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      <div className="space-y-1 text-sm text-neutral-600">
+        <p>
+          步数 {raid.steps.done}/{raid.steps.total}
+          <span className="mx-2 text-neutral-300">|</span>
+          进度 {raid.progress.killed}/{raid.progress.total}
+        </p>
+        {raid.status === '进行中' && (
+          <p className="text-amber-600">剩余重试 {raid.retries_left} 次</p>
+        )}
+      </div>
+
+      {error && <p className="text-sm text-red-600">{error}</p>}
 
       {raid.status === '已失败' && (
-        <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
-          重试次数耗尽，散团了。队伍不解散，点击下方按钮解散队伍解锁成员
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+          重试次数耗尽，散团了。队伍不解散，点击下方按钮解锁成员
         </p>
       )}
       {raid.status === '已通关' && (
-        <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+        <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
           副本通关！点击下方按钮解散队伍解锁成员
         </p>
       )}
 
-      {raid.status === '进行中' && (
-        <div className="mt-4 flex items-center justify-between rounded-lg bg-neutral-50 p-3">
-          <p className="text-sm text-neutral-600">
-            开发阶段：每 10 秒自动推进一步
-            {raid.current_boss && (
-              <span className="ml-2 text-neutral-400">
-                （当前 {raid.current_boss.name}）
-              </span>
-            )}
+      {raid.status === '进行中' && raid.current_boss && (
+        <div className="rounded-lg bg-neutral-50 p-3">
+          <p className="text-sm font-medium">当前 BOSS：{raid.current_boss.name}</p>
+          <p className="mt-0.5 text-xs text-neutral-500">
+            要求装等 {raid.current_boss.gear_req} · 掉落 {raid.current_boss.drop_low}~
+            {raid.current_boss.drop_high}
           </p>
+          <p className="mt-2 text-xs text-neutral-400">开发阶段：每 10 秒自动推进一步</p>
           <button
-            className="rounded border border-neutral-300 px-3 py-1.5 text-xs text-neutral-600 hover:bg-neutral-200 disabled:opacity-50"
+            className="mt-2 w-full rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-200 disabled:opacity-50"
             onClick={() => void handleTick()}
             disabled={ticking}
           >
@@ -158,16 +188,35 @@ export default function RaidPanel() {
         </div>
       )}
 
-      {raid.drops.length > 0 && (
-        <div className="mt-4">
-          <p className="mb-1.5 text-xs font-medium text-neutral-500">
-            掉落装备（{raid.drops.length} 件，待竞拍）
+      {raid.log.length > 0 && (
+        <div>
+          <p className="mb-1 text-xs font-medium text-neutral-500">
+            副本记录（{raid.log.length}）
           </p>
-          <div className="flex flex-wrap gap-1.5">
+          <div
+            ref={logRef}
+            className="max-h-52 space-y-1 overflow-y-auto rounded-lg bg-neutral-50 p-2.5"
+          >
+            {raid.log.map((entry, i) => (
+              <p key={i} className="text-xs leading-relaxed text-neutral-700">
+                <span className="mr-1.5 font-mono text-neutral-400">{entry.time}</span>
+                {entry.message}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {raid.drops.length > 0 && (
+        <div>
+          <p className="mb-1 text-xs font-medium text-neutral-500">
+            掉落装备（{raid.drops.length} 件）
+          </p>
+          <div className="flex flex-wrap gap-1">
             {raid.drops.map((d) => (
               <span
                 key={d.id}
-                className="rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-700"
+                className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700"
               >
                 {d.desc}
               </span>
@@ -176,15 +225,13 @@ export default function RaidPanel() {
         </div>
       )}
 
-      <div className="mt-4">
-        <p className="mb-1.5 text-xs font-medium text-neutral-500">
-          进本成员（{raid.members.length}，副本期间锁定）
-        </p>
-        <div className="flex flex-wrap gap-1.5">
+      <div>
+        <p className="mb-1 text-xs font-medium text-neutral-500">进本成员（{raid.members.length}）</p>
+        <div className="flex flex-wrap gap-1">
           {raid.members.map((m) => (
             <span
               key={m.member_id}
-              className="rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-700"
+              className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700"
             >
               {m.name}
               <span className={'ml-1 ' + (ROLE_BADGE[m.role] ?? '')}>{m.role}</span>
@@ -193,72 +240,18 @@ export default function RaidPanel() {
         </div>
       </div>
 
-      <div className="mt-5 border-t border-neutral-100 pt-3 text-center">
-        <button
-          className={
-            'rounded-lg px-4 py-1.5 text-sm disabled:opacity-50 ' +
-            (raid.status === '进行中'
-              ? 'border border-red-200 text-red-600 hover:bg-red-50'
-              : 'bg-neutral-900 text-white hover:bg-neutral-800')
-          }
-          onClick={() => void handleAbandon()}
-          disabled={abandoning}
-        >
-          {abandoning ? '解散中…' : raid.status === '进行中' ? '解散副本' : '解散队伍'}
-        </button>
-      </div>
-      </div>
-
-      <RaidLogWidget />
-    </>
-  )
-}
-
-/** 副本记录悬浮窗：固定右侧，可收起/展开；副本进行中默认展开，新记录自动滚到底部。 */
-function RaidLogWidget() {
-  const raid = useRaid((s) => s.raid)
-  const [open, setOpen] = useState(() => raid?.status === '进行中')
-  const listRef = useRef<HTMLDivElement>(null)
-  const log = raid?.log ?? []
-
-  useEffect(() => {
-    if (open && listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight
-    }
-  }, [open, log.length])
-
-  if (!raid || log.length === 0) return null
-
-  if (!open) {
-    return (
       <button
-        className="fixed right-0 top-1/3 z-40 rounded-l-lg bg-neutral-900/90 px-1.5 py-4 text-xs tracking-widest text-white [writing-mode:vertical-rl] hover:bg-neutral-800"
-        onClick={() => setOpen(true)}
+        className={
+          'w-full rounded-lg py-1.5 text-sm disabled:opacity-50 ' +
+          (raid.status === '进行中'
+            ? 'border border-red-200 text-red-600 hover:bg-red-50'
+            : 'bg-neutral-900 text-white hover:bg-neutral-800')
+        }
+        onClick={() => void handleAbandon()}
+        disabled={abandoning}
       >
-        副本记录 {log.length}
+        {abandoning ? '解散中…' : raid.status === '进行中' ? '解散副本' : '解散队伍'}
       </button>
-    )
-  }
-
-  return (
-    <div className="fixed right-4 top-24 z-40 w-80 rounded-xl bg-white shadow-lg ring-1 ring-neutral-200">
-      <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-2.5">
-        <p className="text-sm font-medium">副本记录（{log.length}）</p>
-        <button
-          className="text-xs text-neutral-400 hover:text-neutral-900"
-          onClick={() => setOpen(false)}
-        >
-          收起
-        </button>
-      </div>
-      <div ref={listRef} className="max-h-80 space-y-1 overflow-y-auto p-3">
-        {log.map((entry, i) => (
-          <p key={i} className="text-sm text-neutral-700">
-            <span className="mr-2 font-mono text-xs text-neutral-400">{entry.time}</span>
-            {entry.message}
-          </p>
-        ))}
-      </div>
     </div>
   )
 }

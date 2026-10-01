@@ -1,5 +1,6 @@
 import TeamCreate from './TeamCreate'
 import TeamView from './TeamView'
+import RaidPanel from './RaidPanel'
 import { loadUserData } from '../init'
 import { useAuth } from '../stores/auth'
 import { useTeam } from '../stores/team'
@@ -40,7 +41,13 @@ export default function Home({ user }: { user: { id: number; username: string } 
         </div>
       )}
       {status === 'empty' && <TeamCreate />}
-      {status === 'ready' && team && <TeamView team={team} />}
+      {status === 'ready' && team && (
+        <>
+          <TeamView team={team} />
+          {/* 副本悬浮窗：fixed 定位，挂在页面层级 */}
+          <RaidPanel />
+        </>
+      )}
     </div>
   )
 }
