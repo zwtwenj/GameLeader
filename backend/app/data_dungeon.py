@@ -1,11 +1,14 @@
 """副本/BOSS 种子数据，来源 副本.md（10人战宝迦兰）。
 
-K（平衡系数）副本.md 里没有，按 plan.md 示例暂取 120，数值待定后再调。
+K（平衡系数）副本.md 里没有，按 plan.md 示例暂取 120→后改为 110，数值待定后再调。
 """
 
 import json
 
 DUNGEON = {"name": "战宝迦兰", "size": 10, "balance_k": 110}
+
+# 副本通用材料掉落池：副本内每个 BOSS 击败后都会 roll 一遍
+DUNGEON_LOOT = [{"name": "天外陨铁", "min": 1, "max": 1, "chance": 1.0}]
 
 # (seq, BOSS名, A要求装等, B掉落下限, C掉落上限)
 BOSSES = [
@@ -17,6 +20,11 @@ BOSSES = [
     (6, "餐风", 142, 140, 145),
     (7, "千手观音", 145, 143, 150),
 ]
+
+# BOSS 专属掉落表（未列出的 BOSS 无专属）：条目 {"name", "min", "max", "chance"}
+BOSS_LOOTS = {
+    "王海银": [{"name": "猫眼石", "min": 1, "max": 1, "chance": 0.5}],
+}
 
 
 def build_timeline(boss_ids: list[int]) -> list[dict]:
@@ -33,3 +41,7 @@ def build_timeline(boss_ids: list[int]) -> list[dict]:
 
 def timeline_json(boss_ids: list[int]) -> str:
     return json.dumps(build_timeline(boss_ids), ensure_ascii=False)
+
+
+def loot_json(entries: list[dict]) -> str:
+    return json.dumps(entries, ensure_ascii=False)

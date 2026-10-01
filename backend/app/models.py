@@ -143,7 +143,9 @@ class Dungeon(Base):
 
     timeline 是人为编排的节点数组（JSON）：[{event: 'mob'|'advance'|'rest'|
     'fight'|'fight_end', params?: {...}}, ...]，节点执行返回 true 进下一个、
-    false 原地重试，整个副本的推进顺序完全由这份编排决定。"""
+    false 原地重试，整个副本的推进顺序完全由这份编排决定。
+    loot 是副本通用材料掉落池（JSON 数组）：[{"name": "天外陨铁", "min": 1,
+    "max": 1, "chance": 1}, ...]，副本内每个 BOSS 击败后都会 roll 一遍。"""
 
     __tablename__ = "dungeon"
 
@@ -152,6 +154,7 @@ class Dungeon(Base):
     size: Mapped[int] = mapped_column(nullable=False)  # 人数要求：5/10/25
     balance_k: Mapped[int] = mapped_column(nullable=False)  # 平衡系数 K，与副本绑定
     timeline: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)
+    loot: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -159,7 +162,8 @@ class Dungeon(Base):
 
 
 class Boss(Base):
-    """BOSS：A=要求装等，掉落区间 [B, C]（击倒后在该区间随机掉装备，细节后定）。"""
+    """BOSS：A=要求装等，掉落区间 [B, C]；loot 为 BOSS 专属掉落表（JSON 数组，
+    格式同副本通用池，击败后与副本通用池合并 roll）。"""
 
     __tablename__ = "boss"
 
@@ -170,6 +174,7 @@ class Boss(Base):
     gear_req: Mapped[int] = mapped_column(nullable=False)  # A：要求装等
     drop_low: Mapped[int] = mapped_column(nullable=False)  # B：掉落装等下限
     drop_high: Mapped[int] = mapped_column(nullable=False)  # C：掉落装等上限
+    loot: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)
 
     dungeon: Mapped[Dungeon] = relationship(back_populates="bosses")
 

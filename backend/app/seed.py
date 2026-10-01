@@ -6,7 +6,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .data_dungeon import BOSSES, DUNGEON, timeline_json
+from .data_dungeon import BOSSES, DUNGEON, BOSS_LOOTS, timeline_json, loot_json
 from .data_warehouse import ITEMS
 from .data_xinfa import SEED
 from .models import Boss, Dungeon, Item, Sect, Xinfa
@@ -56,7 +56,7 @@ async def seed_dungeon(db: AsyncSession) -> None:
     count = (await db.scalar(select(func.count(Boss.id)))) or 0
     if count > 0:
         return
-    dungeon = Dungeon(**DUNGEON)
+    dungeon = Dungeon(**DUNGEON, loot=loot_json(DUNGEON_LOOT))
     db.add(dungeon)
     await db.flush()
     boss_ids = []
@@ -68,6 +68,7 @@ async def seed_dungeon(db: AsyncSession) -> None:
             gear_req=gear_req,
             drop_low=drop_low,
             drop_high=drop_high,
+            loot=loot_json(BOSS_LOOTS.get(name, [])),
         )
         db.add(boss)
         await db.flush()

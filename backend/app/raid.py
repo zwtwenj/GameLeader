@@ -14,6 +14,7 @@
 
 import asyncio
 import json
+import logging
 import random
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -34,11 +35,13 @@ from .models import (
     Boss,
     Dungeon,
     EquipmentItem,
+    Item,
     Member,
     Raid,
     RaidMember,
     Sect,
     Team,
+    TeamItem,
     User,
     Xinfa,
 )
@@ -115,6 +118,8 @@ async def _chat_loop(raid_id: int) -> None:
 MAX_RETRIES = 5  # 共享战斗重试次数（全副本所有 BOSS 共享）
 WEAPON_DROP_CHANCE = 0.5  # 击败 BOSS 后额外掉落武器的概率（3+1 掉落的"1"）
 CHAT_INTERVAL_RANGE = (10, 20)  # 团队聊天间隔（秒，开发阶段）
+
+log = logging.getLogger(__name__)
 
 # 掉落部位 → 成员装备槽字段（戒指两个槽位特殊处理，武器按门派匹配）
 SLOT_TO_COLUMN = {
@@ -196,6 +201,7 @@ class NodeContext:
     avg_gear: float  # 进本成员平均装等（快照）
     members: list[tuple[Member, Xinfa, Sect]]  # 团队存活成员（分配掉落用）
     sect_names: list[str]  # 全部门派名（武器掉落用）
+    material_items: dict[str, int]  # 材料名 → item_id（数据化材料掉落的入库目标）
 
 
 @dataclass
@@ -295,6 +301,40 @@ async def assign_or_decompose(ctx: NodeContext, item: EquipmentItem) -> str:
     return f"分配给{m.name}"
 
 
+async def grant_material(ctx: NodeContext, item_id: int, qty: int) -> None:
+    """材料入团队库存（team_item 堆叠 upsert）。"""
+    tm = (
+        await ctx.db.execute(
+            select(TeamItem).where(
+                TeamItem.team_id == ctx.team.id, TeamItem.item_id == item_id
+            )
+        )
+    ).scalar_one_or_none()
+    if tm is None:
+        ctx.db.add(TeamItem(team_id=ctx.team.id, item_id=item_id, quantity=qty))
+    else:
+        tm.quantity += qty
+
+
+async def roll_material_loot(ctx: NodeContext, boss: Boss) -> list[str]:
+    """数据化材料掉落：副本通用池（dungeon.loot）+ BOSS 专属表（boss.loot）
+    合并 roll，命中的材料入团队库存。返回战报条目。"""
+    entries = json.loads(ctx.dungeon.loot or "[]") + json.loads(boss.loot or "[]")
+    texts: list[str] = []
+    for entry in entries:
+        if random.random() >= entry.get("chance", 1.0):
+            continue
+        name = entry.get("name", "")
+        item_id = ctx.material_items.get(name)
+        if item_id is None:
+            log.warning("掉落表引用了不存在的材料：%s", name)
+            continue
+        qty = random.randint(entry.get("min", 1), entry.get("max", 1))
+        await grant_material(ctx, item_id, qty)
+        texts.append(f"{boss.name}掉落了{name}×{qty}")
+    return texts
+
+
 async def handle_fight_end(ctx: NodeContext, params: dict) -> NodeOutcome:
     boss = await _get_boss(ctx, params)
     win, probability, base, penalties = decide_battle(
@@ -324,7 +364,7 @@ async def handle_fight_end(ctx: NodeContext, params: dict) -> NodeOutcome:
             stats=stats,
         )
 
-    # 3+1 掉落：必掉 3 件部位装备，50% 概率额外 1 把门派武器
+    # 3+1 保底装备掉落 + 数据化材料掉落（副本通用池 + BOSS 专属表合并 roll）
     entries: list[str] = []
     drops: list[str] = []
     drop_plan = [False, False, False]
@@ -336,10 +376,12 @@ async def handle_fight_end(ctx: NodeContext, params: dict) -> NodeOutcome:
         desc = item_desc(item)
         entries.append(f"{desc}，{verdict}")
         drops.append(f"{boss.name}掉落了{desc}，{verdict}")
+    material_texts = await roll_material_loot(ctx, boss)
+    drops.extend(material_texts)
     ctx.raid.current_seq = max(ctx.raid.current_seq, boss.seq + 1)
     return NodeOutcome(
         advance=True,
-        message=f"BOSS{boss.name}被打倒了，掉落了{'、'.join(entries)}（胜率 {pct_text}）",
+        message=f"BOSS{boss.name}被打倒了，掉落了{'、'.join(entries + material_texts)}（胜率 {pct_text}）",
         drops=drops,
         stats=stats,
     )
@@ -694,6 +736,14 @@ async def tick_raid(
             )
         ).all()
         sect_names = [s for s, in (await db.execute(select(Sect.name))).all()]
+        material_items = {
+            name: id_
+            for name, id_ in (
+                await db.execute(
+                    select(Item.name, Item.id).where(Item.category == "材料")
+                )
+            ).all()
+        }
 
         ctx = NodeContext(
             db=db,
@@ -704,6 +754,7 @@ async def tick_raid(
             avg_gear=avg_gear,
             members=team_members,
             sect_names=sect_names,
+            material_items=material_items,
         )
         handler = NODE_HANDLERS.get(event)
         outcome = (
