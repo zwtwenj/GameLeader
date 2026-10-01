@@ -19,3 +19,4 @@ web/dist/
 # 临时令牌文件
 .tok_tmp
 .rid_tmp
+backend/_*.py
