@@ -138,24 +138,24 @@ export default function RaidModal({
               {team.members.map((m) => {
                 const locked = m.in_raid_id !== null
                 return (
-                  <div key={m.id} className="relative">
-                    <label className="block cursor-pointer">
-                      <input
-                        type="checkbox"
-                        className="absolute left-2 top-3 h-4 w-4"
-                        checked={selected.has(m.id)}
-                        onChange={() => toggleMember(m.id)}
-                        disabled={locked}
+                  <div
+                    key={m.id}
+                    className={'relative' + (locked ? '' : ' cursor-pointer')}
+                    onClick={(e) => {
+                      // 点按钮/复选框走它们自己的逻辑，点卡片其余区域 = 选中/取消
+                      if (locked || (e.target as HTMLElement).closest('button,input')) return
+                      toggleMember(m.id)
+                    }}
+                  >
+                    <div className={locked ? 'opacity-50' : ''}>
+                      <MemberCard
+                        member={m}
+                        isLeader={m.id === team.leader_member_id}
+                        selectable
+                        selected={selected.has(m.id)}
+                        onToggleSelected={() => toggleMember(m.id)}
                       />
-                      <div className={locked ? 'opacity-50' : ''}>
-                        <MemberCard
-                          member={m}
-                          isLeader={m.id === team.leader_member_id}
-                          selectable
-                          selected={selected.has(m.id)}
-                        />
-                      </div>
-                    </label>
+                    </div>
                     {locked && (
                       <span className="absolute right-2 top-3 rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600">
                         副本中

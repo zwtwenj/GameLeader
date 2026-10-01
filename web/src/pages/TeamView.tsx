@@ -163,17 +163,19 @@ export default function TeamView({ team }: { team: TeamInfo }) {
   )
 }
 
-/** 成员卡：自包含（装备详情/切换心法/移除均直接调 store），可在任意页面复用。 */
+/** 成员卡：通用组件——传成员信息即可在任何页面使用（装备详情/切换心法/移除都可用）。 */
 export function MemberCard({
   member: m,
   isLeader,
   selectable = false,
   selected = false,
+  onToggleSelected,
 }: {
   member: MemberInfo
   isLeader: boolean
   selectable?: boolean
   selected?: boolean
+  onToggleSelected?: () => void
 }) {
   const { removeMember, switchXinfa, load, sects, fetchSects } = useTeam()
   const [showDetail, setShowDetail] = useState(false)
@@ -245,7 +247,8 @@ export function MemberCard({
               type="checkbox"
               className="h-4 w-4"
               checked={selected}
-              onChange={() => {}}
+              onChange={() => onToggleSelected?.()}
+              disabled={locked}
             />
           )}
           <span className="font-medium">{m.name}</span>
@@ -276,35 +279,33 @@ export function MemberCard({
         <span>装等 {m.equip_level}</span>
       </div>
 
-      {!selectable && (
-        <div className="mt-3 flex gap-2 border-t border-neutral-100 pt-2.5">
+      <div className="mt-3 flex gap-2 border-t border-neutral-100 pt-2.5">
+        <button
+          className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+          onClick={() => void toggleDetail()}
+          disabled={detailLoading}
+        >
+          {detailLoading ? '加载中…' : showDetail ? '收起装备' : '装备详情'}
+        </button>
+        {canSwitch && (
           <button
             className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
-            onClick={() => void toggleDetail()}
-            disabled={detailLoading}
+            onClick={() => setSwitching(!switching)}
+            disabled={busy}
           >
-            {detailLoading ? '加载中…' : showDetail ? '收起装备' : '装备详情'}
+            切换心法
           </button>
-          {canSwitch && (
-            <button
-              className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
-              onClick={() => setSwitching(!switching)}
-              disabled={busy}
-            >
-              切换心法
-            </button>
-          )}
-          {!isLeader && !locked && (
-            <button
-              className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
-              onClick={handleRemove}
-              disabled={busy}
-            >
-              移除
-            </button>
-          )}
-        </div>
-      )}
+        )}
+        {!isLeader && !locked && (
+          <button
+            className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+            onClick={handleRemove}
+            disabled={busy}
+          >
+            移除
+          </button>
+        )}
+      </div>
 
       {cardError && <p className="mt-2 text-xs text-red-600">{cardError}</p>}
 
