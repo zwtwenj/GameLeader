@@ -9,6 +9,7 @@ export interface MemberInfo {
   xinfa: string
   role: string
   equip_level: number
+  in_raid_id: number | null
 }
 
 export interface TeamInfo {
@@ -74,7 +75,8 @@ export const useTeam = create<TeamState>((set, get) => ({
   sects: [],
 
   load: async () => {
-    set({ status: 'loading' })
+    // 已有数据时静默刷新（不闪回 loading，否则挂载面板会触发 卸载→挂载 循环）
+    if (get().team === null) set({ status: 'loading' })
     try {
       const data = await request<{ team: TeamInfo | null }>('/api/team/me')
       set({ team: data.team, status: data.team ? 'ready' : 'empty' })

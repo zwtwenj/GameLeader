@@ -44,6 +44,7 @@ def member_out(member: Member, xinfa: Xinfa, sect_name: str) -> dict:
         "xinfa": xinfa.name,
         "role": xinfa.role,
         "equip_level": member.equip_level,
+        "in_raid_id": member.in_raid_id,  # 非空=在副本实例中（锁定）
     }
 
 
@@ -317,6 +318,8 @@ async def remove_member(
         ).scalar_one_or_none()
         if member is None or member.team_id != team.id:
             raise ApiError(404, 40400, "成员不存在")
+        if member.in_raid_id is not None:
+            raise ApiError(409, 40900, "成员在副本中，无法移除")
         if member.id == team.leader_member_id:
             raise ApiError(409, 40900, "团长不能移除")
         member.deleted_at = datetime.now()
@@ -349,6 +352,8 @@ async def switch_xinfa(
         ).scalar_one_or_none()
         if member is None or member.team_id != team.id:
             raise ApiError(404, 40400, "成员不存在")
+        if member.in_raid_id is not None:
+            raise ApiError(409, 40900, "成员在副本中，无法切换心法")
         target = await db.get(Xinfa, body.xinfa_id)
         if target is None:
             raise ApiError(422, 42200, "心法不存在")

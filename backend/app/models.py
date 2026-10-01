@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -113,6 +113,9 @@ class Member(Base):
     weapon_level: Mapped[int] = mapped_column(default=120, nullable=False)
     ranged_level: Mapped[int] = mapped_column(default=120, nullable=False)
 
+    # 成员锁：非空表示正在该副本实例中（不可切心法/移除/再进其他本），副本结束置空
+    in_raid_id: Mapped[int | None] = mapped_column(default=None, nullable=True)
+
     def sync_equip_level(self) -> None:
         """槽位装等变动后重算成员装等（平均向下取整）。"""
         self.equip_level = sum(getattr(self, f"{key}_level") for key, _ in MEMBER_SLOTS) // len(MEMBER_SLOTS)
@@ -163,3 +166,61 @@ class Boss(Base):
     drop_high: Mapped[int] = mapped_column(nullable=False)  # C：掉落装等上限
 
     dungeon: Mapped[Dungeon] = relationship(back_populates="bosses")
+
+
+# 掉落装备的槽位与分类（武器每门派独立，掉落先不做武器）
+DROP_SLOTS = ["帽子", "上衣", "腰带", "护腕", "下装", "鞋子", "项链", "腰坠", "戒指", "远程武器"]
+DROP_TYPES = ["体质", "治疗", "外功", "内功"]
+
+# 各人数规格的开荒构成要求与缺员惩罚（plan.md：缺坦/缺治/缺输 每少 1 的 X 减免）
+COMPOSITION_RULES = {
+    5: {"tank": 0, "heal": 1, "dps": 1, "p_tank": 0.0, "p_heal": 0.2, "p_dps": 0.2},
+    10: {"tank": 1, "heal": 1, "dps": 4, "p_tank": 0.4, "p_heal": 0.4, "p_dps": 0.2},
+    25: {"tank": 2, "heal": 5, "dps": 10, "p_tank": 0.4, "p_heal": 0.2, "p_dps": 0.2},
+}
+
+
+class Raid(Base):
+    """副本实例：每次进本创建，与网游相同——进度/状态/掉落都挂在实例上，
+    副本表只是模板。"""
+
+    __tablename__ = "raid"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("team.id"), nullable=False)
+    dungeon_id: Mapped[int] = mapped_column(ForeignKey("dungeon.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(8), default="进行中", nullable=False)  # 进行中/已通关/已失败
+    current_seq: Mapped[int] = mapped_column(default=1, nullable=False)  # 下一个挑战的 BOSS seq
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class RaidMember(Base):
+    """进本成员快照：进本时定格，副本期间移除成员/切心法不影响实例数据。"""
+
+    __tablename__ = "raid_member"
+    __table_args__ = (UniqueConstraint("raid_id", "member_id", name="uq_raid_member"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    raid_id: Mapped[int] = mapped_column(ForeignKey("raid.id"), nullable=False)
+    member_id: Mapped[int] = mapped_column(ForeignKey("member.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(16), nullable=False)  # 快照
+    xinfa_id: Mapped[int] = mapped_column(ForeignKey("xinfa.id"), nullable=False)  # 快照
+    equip_level: Mapped[int] = mapped_column(nullable=False)  # 快照
+
+
+class EquipmentItem(Base):
+    """掉落装备实例："130外功帽子" = 装等 + 分类 + 槽位。分类仅用于竞拍时
+    过滤"符合的成员"（成员槽位装等与分类无关，切心法不清装备）。"""
+
+    __tablename__ = "equipment_item"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("team.id"), nullable=False)
+    raid_id: Mapped[int] = mapped_column(ForeignKey("raid.id"), nullable=False)
+    slot: Mapped[str] = mapped_column(String(8), nullable=False)
+    equip_type: Mapped[str] = mapped_column(String(4), nullable=False)
+    equip_level: Mapped[int] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String(8), default="待竞拍", nullable=False)
+    owner_member_id: Mapped[int | None] = mapped_column(default=None, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

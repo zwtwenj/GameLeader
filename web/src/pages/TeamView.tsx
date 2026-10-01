@@ -1,14 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/client'
-import type {
-  MemberDetailInfo,
-  MemberInfo,
-  RecruitOfferInfo,
-  TeamInfo,
-  XinfaInfo,
-} from '../stores/team'
+import type { MemberDetailInfo, MemberInfo, RecruitOfferInfo, TeamInfo } from '../stores/team'
 import { useTeam } from '../stores/team'
+import { useRaid } from '../stores/raid'
+import RaidPanel from './RaidPanel'
+import RaidModal from './RaidModal'
 
 const ROLE_BADGE: Record<string, string> = {
   坦克: 'bg-sky-100 text-sky-700',
@@ -17,38 +14,27 @@ const ROLE_BADGE: Record<string, string> = {
 }
 
 export default function TeamView({ team }: { team: TeamInfo }) {
-  const { recruit, acceptRecruit, removeMember, switchXinfa, load, sects, fetchSects } =
-    useTeam()
+  const { recruit, acceptRecruit, load } = useTeam()
+  const { load: loadRaid } = useRaid()
   const [candidate, setCandidate] = useState<RecruitOfferInfo | null>(null)
   const [recruiting, setRecruiting] = useState(false)
   const [accepting, setAccepting] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [switchingId, setSwitchingId] = useState<number | null>(null)
   const [error, setError] = useState('')
+  const [showRaidModal, setShowRaidModal] = useState(false)
   const started = useRef(false)
 
-  // 切换心法需要门派的心法列表；缓存为空时取一次
+  const raidStore = useRaid()
+  const raidActive = raidStore.raid?.status === '进行中'
+
+  // 团队与副本状态各加载一次（ref 防 StrictMode 双调用）
   useEffect(() => {
     if (started.current) return
     started.current = true
-    fetchSects().catch(() => {})
-  }, [fetchSects])
+    void load()
+    void loadRaid().catch(() => {})
+  }, [load, loadRaid])
 
   const full = team.members.length >= team.member_cap
-
-  async function run(fn: () => Promise<void>) {
-    if (busy) return
-    setError('')
-    setBusy(true)
-    try {
-      await fn()
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : '出了点问题，请重试')
-      await load().catch(() => {}) // 失败后以服务端为准刷新，防状态漂移
-    } finally {
-      setBusy(false)
-    }
-  }
 
   async function handleRecruit() {
     if (recruiting) return
@@ -80,21 +66,6 @@ export default function TeamView({ team }: { team: TeamInfo }) {
     }
   }
 
-  function handleRemove(m: MemberInfo) {
-    if (busy) return
-    if (!window.confirm(`确定移除成员「${m.name}」？`)) return
-    void run(() => removeMember(m.id))
-  }
-
-  function handleSwitch(m: MemberInfo, xinfaId: number) {
-    setSwitchingId(null)
-    void run(() => switchXinfa(m.id, xinfaId))
-  }
-
-  function xinfasOf(sectName: string): XinfaInfo[] {
-    return sects.find((s) => s.name === sectName)?.xinfas ?? []
-  }
-
   return (
     <div className="mx-auto max-w-2xl px-4 py-10">
       <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-neutral-200">
@@ -103,26 +74,36 @@ export default function TeamView({ team }: { team: TeamInfo }) {
             <h1 className="text-xl font-semibold">{team.name}</h1>
             <p className="mt-1 text-sm text-neutral-500">团队资金：{team.fund}</p>
           </div>
-          <div className="text-right">
+          <div className="flex flex-col items-end gap-1.5">
             <p className="text-sm text-neutral-500">
               成员 {team.members.length}/{team.member_cap}
             </p>
-            <button
-              className="mt-1.5 rounded-lg bg-neutral-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
-              onClick={() => void handleRecruit()}
-              disabled={recruiting || full}
-            >
-              {recruiting ? '刷新中…' : full ? '成员已满' : '招募'}
-            </button>
+            <div className="flex gap-2">
+              <button
+                className="rounded-lg bg-neutral-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
+                onClick={() => void handleRecruit()}
+                disabled={recruiting || full}
+              >
+                {recruiting ? '刷新中…' : full ? '成员已满' : '招募'}
+              </button>
+              {!raidActive && (
+                <button
+                  className="rounded-lg border border-neutral-900 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-neutral-100"
+                  onClick={() => setShowRaidModal(true)}
+                >
+                  开团
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
       {error && (
-        <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
-          {error}
-        </p>
+        <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
+
+      <RaidPanel />
 
       {candidate && (
         <div className="mt-4 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">
@@ -159,8 +140,7 @@ export default function TeamView({ team }: { team: TeamInfo }) {
             </div>
           </div>
           <p className="mt-2 text-sm text-neutral-500">
-            {candidate.sect} · {candidate.xinfa} · {candidate.equip_type}装备 ·
-            装等 120
+            {candidate.sect} · {candidate.xinfa} · {candidate.equip_type}装备 · 装等 120
           </p>
         </div>
       )}
@@ -172,46 +152,66 @@ export default function TeamView({ team }: { team: TeamInfo }) {
             key={m.id}
             member={m}
             isLeader={m.id === team.leader_member_id}
-            xinfas={xinfasOf(m.sect)}
-            switching={switchingId === m.id}
-            busy={busy}
-            onToggleSwitch={() =>
-              setSwitchingId(switchingId === m.id ? null : m.id)
-            }
-            onSwitch={(xinfaId) => handleSwitch(m, xinfaId)}
-            onRemove={() => handleRemove(m)}
           />
         ))}
       </div>
+
+      {showRaidModal && team && (
+        <RaidModal team={team} onClose={() => setShowRaidModal(false)} />
+      )}
     </div>
   )
 }
 
-function MemberCard({
+/** 成员卡：自包含（装备详情/切换心法/移除均直接调 store），可在任意页面复用。 */
+export function MemberCard({
   member: m,
   isLeader,
-  xinfas,
-  switching,
-  busy,
-  onToggleSwitch,
-  onSwitch,
-  onRemove,
+  selectable = false,
+  selected = false,
 }: {
   member: MemberInfo
   isLeader: boolean
-  xinfas: XinfaInfo[]
-  switching: boolean
-  busy: boolean
-  onToggleSwitch: () => void
-  onSwitch: (xinfaId: number) => void
-  onRemove: () => void
+  selectable?: boolean
+  selected?: boolean
 }) {
-  const { memberDetail } = useTeam()
+  const { removeMember, switchXinfa, load, sects, fetchSects } = useTeam()
   const [showDetail, setShowDetail] = useState(false)
   const [detail, setDetail] = useState<MemberDetailInfo | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [switching, setSwitching] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [cardError, setCardError] = useState('')
+  const started = useRef(false)
 
-  const canSwitch = xinfas.length > 1
+  const locked = m.in_raid_id !== null
+  const canSwitch = !locked && (sects.find((s) => s.name === m.sect)?.xinfas.length ?? 0) > 1
+
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    fetchSects().catch(() => {})
+  }, [fetchSects])
+
+  async function run(fn: () => Promise<void>) {
+    if (busy) return
+    setCardError('')
+    setBusy(true)
+    try {
+      await fn()
+    } catch (err) {
+      setCardError(err instanceof ApiError ? err.message : '出了点问题，请重试')
+      await load().catch(() => {})
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function handleRemove() {
+    if (busy) return
+    if (!window.confirm(`确定移除成员「${m.name}」？`)) return
+    void run(() => removeMember(m.id))
+  }
 
   async function toggleDetail() {
     if (showDetail) {
@@ -222,7 +222,7 @@ function MemberCard({
     if (detail) return
     setDetailLoading(true)
     try {
-      setDetail(await memberDetail(m.id))
+      setDetail(await useTeam.getState().memberDetail(m.id))
     } catch {
       setDetail(null)
       setShowDetail(false)
@@ -232,13 +232,31 @@ function MemberCard({
   }
 
   return (
-    <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-neutral-200">
+    <div
+      className={
+        'rounded-xl bg-white p-4 shadow-sm ring-1 ' +
+        (selected ? 'ring-2 ring-neutral-900' : 'ring-neutral-200')
+      }
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
+          {selectable && (
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={selected}
+              onChange={() => {}}
+            />
+          )}
           <span className="font-medium">{m.name}</span>
           {isLeader && (
             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">
               团长
+            </span>
+          )}
+          {locked && (
+            <span className="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600">
+              副本中
             </span>
           )}
         </div>
@@ -258,32 +276,37 @@ function MemberCard({
         <span>装等 {m.equip_level}</span>
       </div>
 
-      <div className="mt-3 flex gap-2 border-t border-neutral-100 pt-2.5">
-        <button
-          className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100"
-          onClick={() => void toggleDetail()}
-        >
-          {detailLoading ? '加载中…' : showDetail ? '收起装备' : '装备详情'}
-        </button>
-        {canSwitch && (
+      {!selectable && (
+        <div className="mt-3 flex gap-2 border-t border-neutral-100 pt-2.5">
           <button
             className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
-            onClick={onToggleSwitch}
-            disabled={busy}
+            onClick={() => void toggleDetail()}
+            disabled={detailLoading}
           >
-            切换心法
+            {detailLoading ? '加载中…' : showDetail ? '收起装备' : '装备详情'}
           </button>
-        )}
-        {!isLeader && (
-          <button
-            className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
-            onClick={onRemove}
-            disabled={busy}
-          >
-            移除
-          </button>
-        )}
-      </div>
+          {canSwitch && (
+            <button
+              className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+              onClick={() => setSwitching(!switching)}
+              disabled={busy}
+            >
+              切换心法
+            </button>
+          )}
+          {!isLeader && !locked && (
+            <button
+              className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+              onClick={handleRemove}
+              disabled={busy}
+            >
+              移除
+            </button>
+          )}
+        </div>
+      )}
+
+      {cardError && <p className="mt-2 text-xs text-red-600">{cardError}</p>}
 
       {showDetail && (
         <div className="mt-2 rounded-lg bg-neutral-50 p-2">
@@ -306,13 +329,16 @@ function MemberCard({
 
       {switching && (
         <div className="mt-2 flex flex-wrap gap-2 rounded-lg bg-neutral-50 p-2">
-          {xinfas
+          {(sects.find((s) => s.name === m.sect)?.xinfas ?? [])
             .filter((x) => x.name !== m.xinfa)
             .map((x) => (
               <button
                 key={x.id}
                 className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-700 hover:border-neutral-900 disabled:opacity-50"
-                onClick={() => onSwitch(x.id)}
+                onClick={() => {
+                  setSwitching(false)
+                  void run(() => switchXinfa(m.id, x.id))
+                }}
                 disabled={busy}
               >
                 {x.name}（{x.role}）
