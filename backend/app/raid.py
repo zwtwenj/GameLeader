@@ -1,9 +1,11 @@
-"""副本实例路由：开团（进本）、解散、查询当前实例。
+"""副本实例路由：开团（进本）、推进时间线（tick）、解散、查询当前实例。
 
-副本实例记录成员/进度/状态/掉落（equipment_item 表，暂无写入逻辑——
-击杀与掉落判定规则待定），解散实例会解锁全部进本成员。
+时间线状态机：当前节点执行返回 true → 游标进下一个节点；返回 false →
+原地重试（消耗全副本共享的重试次数，耗尽则副本失败散团）。副本记录（log）
+随每次推进追加，开发阶段前端按 10 秒/步调用 tick。
 """
 
+import json
 import random
 from datetime import datetime
 
@@ -17,6 +19,8 @@ from .auth import get_current_user
 from .db import get_db
 from .errors import ApiError
 from .models import (
+    DROP_SLOTS,
+    DROP_TYPES,
     Boss,
     Dungeon,
     EquipmentItem,
@@ -30,6 +34,14 @@ from .models import (
 )
 
 router = APIRouter(prefix="/api/raid", tags=["raid"])
+
+MAX_RETRIES = 5  # 共享战斗重试次数（全副本所有 BOSS 共享）
+
+
+def decide_battle(boss: Boss, avg_gear: float) -> bool:
+    """战斗结果判定——规则待定，占位实现：70% 概率击败。
+    定稿后只改这一个函数，fight_end 节点的 true/false 即由此而来。"""
+    return random.random() < 0.7
 
 
 class RaidCreateIn(BaseModel):
@@ -66,24 +78,30 @@ async def raid_payload(db: AsyncSession, raid: Raid) -> dict:
         )
     ).scalars().all()
 
+    timeline = json.loads(dungeon.timeline or "[]")
     current_boss = None
-    if raid.status == "进行中":
-        boss = next((b for b in bosses if b.seq == raid.current_seq), None)
-        if boss is not None:
-            current_boss = {
-                "seq": boss.seq,
-                "name": boss.name,
-                "gear_req": boss.gear_req,
-                "drop_low": boss.drop_low,
-                "drop_high": boss.drop_high,
-            }
+    if raid.status == "进行中" and raid.node_index < len(timeline):
+        node = timeline[raid.node_index]
+        if node.get("event") in ("fight", "fight_end"):
+            boss = await db.get(Boss, node.get("params", {}).get("boss_id", 0))
+            if boss is not None:
+                current_boss = {
+                    "seq": boss.seq,
+                    "name": boss.name,
+                    "gear_req": boss.gear_req,
+                    "drop_low": boss.drop_low,
+                    "drop_high": boss.drop_high,
+                }
 
     return {
         "id": raid.id,
         "status": raid.status,
         "dungeon": {"id": dungeon.id, "name": f"{dungeon.size}人{dungeon.name}", "size": dungeon.size},
         "progress": {"killed": raid.current_seq - 1, "total": len(bosses)},
+        "steps": {"done": raid.node_index, "total": len(timeline)},
+        "retries_left": raid.retries_left,
         "current_boss": current_boss,
+        "log": json.loads(raid.log or "[]"),
         "members": [
             {
                 "member_id": rm.member_id,
@@ -199,14 +217,18 @@ async def create_raid(
     return {"raid": await raid_payload(db, raid)}
 
 
-@router.post("/{raid_id}/abandon")
-async def abandon_raid(
+@router.post("/{raid_id}/tick")
+async def tick_raid(
     raid_id: int,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """解散副本实例：状态置为已解散并解锁全部进本成员。
-    击杀与掉落判定规则待定，先提供退出通道防止成员永久锁定。"""
+    """推进一个时间线节点：执行当前节点，返回 true 进下一个、false 原地重试。
+
+    事件语义（节点可人为编排，顺序不限）：
+    mob=清理小怪 / advance=赶往BOSS / rest=休整 / fight=开战（params.boss_id）/
+    fight_end=结算（params.boss_id）：win→掉3件装备返回 true；lose→消耗重试
+    返回 false 原地重试，重试耗尽副本失败散团（不解散队伍，玩家手动解散）。"""
     team = (
         await db.execute(select(Team).where(Team.user_id == user.id, Team.deleted_at.is_(None)))
     ).scalar_one_or_none()
@@ -221,8 +243,126 @@ async def abandon_raid(
         if raid.status != "进行中":
             raise ApiError(409, 40900, "该副本已结束")
 
-        raid.status = "已解散"
-        raid.finished_at = datetime.now()
+        dungeon = await db.get(Dungeon, raid.dungeon_id)
+        timeline = json.loads(dungeon.timeline or "[]")
+        if not timeline:
+            raise ApiError(422, 42200, "该副本没有编排时间线")
+        if raid.node_index >= len(timeline):
+            # 上一 win 已推进到末尾（防御分支）
+            raid.status = "已通关"
+            raid.finished_at = datetime.now()
+            await db.commit()
+            return {"raid": await raid_payload(db, raid)}
+
+        node = timeline[raid.node_index]
+        event = node.get("event")
+        params = node.get("params") or {}
+        advance = True
+        drops_desc: list[str] = []
+        avg_gear = 0.0
+
+        snapshots = (
+            await db.execute(
+                select(RaidMember.equip_level).where(RaidMember.raid_id == raid.id)
+            )
+        ).scalars().all()
+        avg_gear = round(sum(snapshots) / len(snapshots), 1) if snapshots else 0
+
+        if event == "mob":
+            message = "正在清理路上的小怪"
+        elif event == "advance":
+            message = "正在赶往BOSS位置"
+        elif event == "rest":
+            message = "队伍原地休整，恢复状态"
+        elif event == "fight":
+            boss = await db.get(Boss, params.get("boss_id", 0))
+            if boss is None:
+                raise ApiError(422, 42200, f"时间线节点引用了不存在的BOSS（boss_id={params.get('boss_id')}）")
+            message = f"正在与{boss.name}作战"
+        elif event == "fight_end":
+            boss = await db.get(Boss, params.get("boss_id", 0))
+            if boss is None:
+                raise ApiError(422, 42200, f"时间线节点引用了不存在的BOSS（boss_id={params.get('boss_id')}）")
+            if decide_battle(boss, avg_gear):
+                for _ in range(3):
+                    item = EquipmentItem(
+                        team_id=team.id,
+                        raid_id=raid.id,
+                        slot=random.choice(DROP_SLOTS),
+                        equip_type=random.choice(DROP_TYPES),
+                        equip_level=random.randint(boss.drop_low, boss.drop_high),
+                    )
+                    db.add(item)
+                    await db.flush()
+                    drops_desc.append(item_desc(item))
+                message = f"BOSS{boss.name}被打到了，掉落了{'、'.join(drops_desc)}"
+                raid.current_seq = max(raid.current_seq, boss.seq + 1)
+            else:
+                advance = False
+                raid.retries_left -= 1
+                if raid.retries_left <= 0:
+                    message = "队伍被团灭了，重试次数耗尽，散团了"
+                    raid.status = "已失败"
+                    raid.finished_at = datetime.now()
+                else:
+                    message = f"队伍被团灭了（剩余重试 {raid.retries_left} 次），重新集结进攻"
+        else:
+            message = f"未知事件 {event}，跳过"
+
+        if advance:
+            raid.node_index += 1
+            if raid.node_index >= len(timeline) and raid.status == "进行中":
+                raid.status = "已通关"
+                raid.finished_at = datetime.now()
+                message = message or "副本通关"
+
+        log = json.loads(raid.log or "[]")
+        log.append(
+            {
+                "step": raid.node_index if advance else raid.node_index + 1,
+                "event": event,
+                "message": message,
+                "time": datetime.now().strftime("%H:%M:%S"),
+            }
+        )
+        raid.log = json.dumps(log, ensure_ascii=False)
+        raid_status = raid.status
+        await db.commit()
+    except BaseException:
+        await db.rollback()  # 掉落/游标/重试/记录同生共死
+        raise
+
+    return {
+        "message": message,
+        "advance": advance,
+        "drops": drops_desc,
+        "raid_status": raid_status,
+        "raid": await raid_payload(db, raid),
+    }
+
+
+@router.post("/{raid_id}/abandon")
+async def abandon_raid(
+    raid_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """解散队伍：进行中的副本置为已解散；已结束（通关/失败）的副本仅解锁
+    全部进本成员——副本记录与掉落保留。"""
+    team = (
+        await db.execute(select(Team).where(Team.user_id == user.id, Team.deleted_at.is_(None)))
+    ).scalar_one_or_none()
+    if team is None:
+        raise ApiError(404, 40400, "还没有团队")
+    try:
+        raid = (
+            await db.execute(select(Raid).where(Raid.id == raid_id).with_for_update())
+        ).scalar_one_or_none()
+        if raid is None or raid.team_id != team.id:
+            raise ApiError(404, 40400, "副本实例不存在")
+        if raid.status == "进行中":
+            raid.status = "已解散"
+            raid.finished_at = datetime.now()
         members = (
             await db.execute(
                 select(Member).where(Member.in_raid_id == raid.id, Member.team_id == team.id)

@@ -3,6 +3,8 @@
 K（平衡系数）副本.md 里没有，按 plan.md 示例暂取 120，数值待定后再调。
 """
 
+import json
+
 DUNGEON = {"name": "战宝迦兰", "size": 10, "balance_k": 120}
 
 # (seq, BOSS名, A要求装等, B掉落下限, C掉落上限)
@@ -15,3 +17,19 @@ BOSSES = [
     (6, "餐风", 142, 140, 145),
     (7, "千手观音", 145, 143, 150),
 ]
+
+
+def build_timeline(boss_ids: list[int]) -> list[dict]:
+    """编排副本时间线：每个 BOSS 三步（赶路 → 开战 → 结算），7×3=21 节点。
+
+    时间线可人为自由编排（插入 mob/rest 等），这里只是战宝迦兰的默认编排。"""
+    timeline: list[dict] = []
+    for boss_id in boss_ids:
+        timeline.append({"event": "advance"})
+        timeline.append({"event": "fight", "params": {"boss_id": boss_id}})
+        timeline.append({"event": "fight_end", "params": {"boss_id": boss_id}})
+    return timeline
+
+
+def timeline_json(boss_ids: list[int]) -> str:
+    return json.dumps(build_timeline(boss_ids), ensure_ascii=False)

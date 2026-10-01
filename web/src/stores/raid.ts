@@ -36,12 +36,22 @@ export interface RaidDropInfo {
   equip_level: number
 }
 
+export interface RaidLogEntry {
+  step: number
+  event: string
+  message: string
+  time: string
+}
+
 export interface RaidInfo {
   id: number
   status: string
   dungeon: { id: number; name: string; size: number }
   progress: { killed: number; total: number }
+  steps: { done: number; total: number }
+  retries_left: number
   current_boss: RaidBossInfo | null
+  log: RaidLogEntry[]
   members: RaidMemberInfo[]
   drops: RaidDropInfo[]
 }
@@ -55,7 +65,9 @@ interface RaidState {
   load: () => Promise<void>
   fetchDungeons: () => Promise<void>
   createRaid: (dungeonId: number, memberIds: number[]) => Promise<void>
-  /** 解散副本实例并解锁成员（击杀/掉落逻辑待定，先提供退出通道） */
+  /** 推进一个时间线节点（返回 true 进下一个 / false 原地重试） */
+  tick: (raidId: number) => Promise<void>
+  /** 解散队伍：进行中→已解散；已结束→仅解锁成员（记录与掉落保留） */
   abandonRaid: (raidId: number) => Promise<void>
 }
 
@@ -91,6 +103,13 @@ export const useRaid = create<RaidState>((set, get) => ({
     await get().load()
     // 进本会锁定成员，团队页面的锁定徽章需要同步刷新
     await useTeam.getState().load()
+  },
+
+  tick: async (raidId) => {
+    const data = await request<{ raid: RaidInfo }>(`/api/raid/${raidId}/tick`, {
+      method: 'POST',
+    })
+    set({ raid: data.raid })
   },
 
   abandonRaid: async (raidId) => {

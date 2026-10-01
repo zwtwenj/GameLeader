@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -138,7 +138,11 @@ class RecruitOffer(Base):
 
 
 class Dungeon(Base):
-    """副本：人数规格与平衡系数 K，BOSS 由前到后 seq 递增。"""
+    """副本：人数规格与平衡系数 K，BOSS 由前到后 seq 递增。
+
+    timeline 是人为编排的节点数组（JSON）：[{event: 'mob'|'advance'|'rest'|
+    'fight'|'fight_end', params?: {...}}, ...]，节点执行返回 true 进下一个、
+    false 原地重试，整个副本的推进顺序完全由这份编排决定。"""
 
     __tablename__ = "dungeon"
 
@@ -146,6 +150,7 @@ class Dungeon(Base):
     name: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     size: Mapped[int] = mapped_column(nullable=False)  # 人数要求：5/10/25
     balance_k: Mapped[int] = mapped_column(nullable=False)  # 平衡系数 K，与副本绑定
+    timeline: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -182,15 +187,19 @@ COMPOSITION_RULES = {
 
 class Raid(Base):
     """副本实例：每次进本创建，与网游相同——进度/状态/掉落都挂在实例上，
-    副本表只是模板。"""
+    副本表只是模板。node_index 是时间线游标，retries_left 是全副本共享的
+    战斗重试次数（节点返回 false 时消耗），log 是副本记录（JSON 数组）。"""
 
     __tablename__ = "raid"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("team.id"), nullable=False)
     dungeon_id: Mapped[int] = mapped_column(ForeignKey("dungeon.id"), nullable=False)
-    status: Mapped[str] = mapped_column(String(8), default="进行中", nullable=False)  # 进行中/已通关/已失败
-    current_seq: Mapped[int] = mapped_column(default=1, nullable=False)  # 下一个挑战的 BOSS seq
+    status: Mapped[str] = mapped_column(String(8), default="进行中", nullable=False)  # 进行中/已通关/已失败/已解散
+    current_seq: Mapped[int] = mapped_column(default=1, nullable=False)  # 已击败的 BOSS 数
+    node_index: Mapped[int] = mapped_column(default=0, nullable=False)  # 时间线游标（已完成节点数）
+    retries_left: Mapped[int] = mapped_column(default=5, nullable=False)  # 共享重试次数
+    log: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)  # 副本记录
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

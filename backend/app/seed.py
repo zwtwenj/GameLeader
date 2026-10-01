@@ -5,7 +5,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .data_dungeon import BOSSES, DUNGEON
+from .data_dungeon import BOSSES, DUNGEON, timeline_json
 from .data_xinfa import SEED
 from .models import Boss, Dungeon, Sect, Xinfa
 
@@ -40,16 +40,19 @@ async def seed_dungeon(db: AsyncSession) -> None:
     dungeon = Dungeon(**DUNGEON)
     db.add(dungeon)
     await db.flush()
+    boss_ids = []
     for seq, name, gear_req, drop_low, drop_high in BOSSES:
-        db.add(
-            Boss(
-                dungeon_id=dungeon.id,
-                seq=seq,
-                name=name,
-                gear_req=gear_req,
-                drop_low=drop_low,
-                drop_high=drop_high,
-            )
+        boss = Boss(
+            dungeon_id=dungeon.id,
+            seq=seq,
+            name=name,
+            gear_req=gear_req,
+            drop_low=drop_low,
+            drop_high=drop_high,
         )
+        db.add(boss)
+        await db.flush()
+        boss_ids.append(boss.id)
+    dungeon.timeline = timeline_json(boss_ids)
     await db.commit()
-    log.info("副本/BOSS 种子数据已写入：%d 副本 %d BOSS", 1, len(BOSSES))
+    log.info("副本/BOSS 种子数据已写入：%d 副本 %d BOSS %d 节点", 1, len(BOSSES), len(boss_ids) * 3)
