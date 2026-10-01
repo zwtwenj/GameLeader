@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { ApiError } from '../api/client'
+import type { WarehouseEquipmentInfo } from '../stores/warehouse'
 import { useTeam } from '../stores/team'
 import { useWarehouse } from '../stores/warehouse'
 import CraftModal from './CraftModal'
@@ -110,14 +111,25 @@ function WarehouseEquipmentRow({
   item,
   onError,
 }: {
-  item: { id: number; text: string; source: string }
+  item: WarehouseEquipmentInfo
   onError: (msg: string) => void
 }) {
   const { assignEquipment, decomposeEquipment } = useWarehouse()
   const members = useTeam((s) => s.team?.members ?? [])
+  const sects = useTeam((s) => s.sects)
   const [assigning, setAssigning] = useState(false)
   const [memberChoice, setMemberChoice] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // 前端过滤可分配成员：属性重合（武器按门派），副本中的成员除外
+  const eligible = members.filter((m) => {
+    if (m.in_raid_id !== null) return false
+    if (item.slot === '武器') return m.sect === item.equip_type
+    const equipType = sects
+      .find((s) => s.name === m.sect)
+      ?.xinfas.find((x) => x.name === m.xinfa)?.equip_type
+    return equipType === item.equip_type
+  })
 
   async function handleAssign() {
     if (busy || memberChoice === null) return
@@ -174,8 +186,10 @@ function WarehouseEquipmentRow({
             value={memberChoice ?? ''}
             onChange={(e) => setMemberChoice(Number(e.target.value) || null)}
           >
-            <option value="">选择成员</option>
-            {members.map((m) => (
+            <option value="">
+              {eligible.length > 0 ? '选择成员' : '没有符合属性的成员'}
+            </option>
+            {eligible.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}（{m.sect}·{m.xinfa}）
               </option>
