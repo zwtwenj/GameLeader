@@ -1,19 +1,23 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 
+import { initApp, loadUserData } from './init'
 import Home from './pages/Home'
 import Login from './pages/Login'
 import { useAuth } from './stores/auth'
 
 export default function App() {
-  const { status, user, init } = useAuth()
-  const started = useRef(false)
+  const status = useAuth((s) => s.status)
+  const user = useAuth((s) => s.user)
 
-  // 进页恰好一次初始化（ref 防 StrictMode 双调用）
+  // 启动：恢复登录态
   useEffect(() => {
-    if (started.current) return
-    started.current = true
-    void init()
-  }, [init])
+    void initApp()
+  }, [])
+
+  // 登录态就绪（登录成功 / 刷新恢复）后加载业务数据与静态配置
+  useEffect(() => {
+    if (status === 'authed') void loadUserData()
+  }, [status])
 
   if (status === 'loading') {
     return (
@@ -29,7 +33,7 @@ export default function App() {
         <p className="text-neutral-600">服务暂不可用</p>
         <button
           className="rounded bg-neutral-800 px-4 py-1.5 text-sm text-white hover:bg-neutral-700"
-          onClick={() => void init()}
+          onClick={() => void initApp()}
         >
           重试
         </button>

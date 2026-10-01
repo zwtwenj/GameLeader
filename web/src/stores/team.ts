@@ -50,6 +50,9 @@ export interface MemberDetailInfo extends MemberInfo {
 
 type Status = 'loading' | 'empty' | 'ready' | 'offline'
 
+// 门派是静态配置：缓存 + in-flight 去重（成员卡同时挂载只发一次请求）
+let sectsPromise: Promise<void> | null = null
+
 interface TeamState {
   status: Status
   team: TeamInfo | null
@@ -90,8 +93,12 @@ export const useTeam = create<TeamState>((set, get) => ({
 
   fetchSects: async () => {
     if (get().sects.length > 0) return
-    const sects = await request<SectInfo[]>('/api/game/sects')
-    set({ sects })
+    sectsPromise ??= request<SectInfo[]>('/api/game/sects')
+      .then((sects) => set({ sects }))
+      .finally(() => {
+        sectsPromise = null
+      })
+    await sectsPromise
   },
 
   createTeam: async (name, leaderName, sectId) => {

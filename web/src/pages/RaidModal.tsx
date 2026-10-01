@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { ApiError } from '../api/client'
 import type { TeamInfo } from '../stores/team'
@@ -17,7 +17,7 @@ export default function RaidModal({
   team: TeamInfo
   onClose: () => void
 }) {
-  const { dungeons, fetchDungeons, createRaid, preview } = useRaid()
+  const { dungeons, createRaid, preview } = useRaid()
   const [step, setStep] = useState<1 | 2 | 3>(1)
   const [sizeFilter, setSizeFilter] = useState<number | null>(10) // 默认 10 人
   const [dungeonId, setDungeonId] = useState<number | null>(null)
@@ -27,13 +27,6 @@ export default function RaidModal({
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [previewInfo, setPreviewInfo] = useState<RaidPreviewInfo | null>(null)
-  const started = useRef(false)
-
-  useEffect(() => {
-    if (started.current) return
-    started.current = true
-    fetchDungeons().catch(() => setError('副本数据加载失败，请关闭后重试'))
-  }, [fetchDungeons])
 
   const filtered = dungeons.filter((d) => sizeFilter === null || d.size === sizeFilter)
   const dungeon = dungeons.find((d) => d.id === dungeonId) ?? null

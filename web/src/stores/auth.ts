@@ -9,6 +9,9 @@ export interface User {
 
 type Status = 'loading' | 'authed' | 'anon' | 'offline'
 
+// 单飞锁：并发 init（如 StrictMode 双挂载）共享同一次恢复流程
+let initPromise: Promise<void> | null = null
+
 interface AuthState {
   user: User | null
   status: Status
@@ -22,26 +25,11 @@ export const useAuth = create<AuthState>((set) => ({
   user: null,
   status: 'loading',
 
-  init: async () => {
-    if (!tokens.refresh) {
-      set({ status: 'anon' })
-      return
-    }
-    const result = await refreshSession()
-    if (result === 'ok') {
-      try {
-        const me = await request<{ id: number; username: string }>('/api/auth/me')
-        set({ user: me, status: 'authed' })
-      } catch {
-        tokens.clear()
-        set({ status: 'anon' })
-      }
-    } else if (result === 'invalid') {
-      tokens.clear()
-      set({ status: 'anon' })
-    } else {
-      set({ status: 'offline' })
-    }
+  init: () => {
+    initPromise ??= doInit().finally(() => {
+      initPromise = null
+    })
+    return initPromise
   },
 
   login: async (username, password) => {
@@ -69,3 +57,25 @@ export const useAuth = create<AuthState>((set) => ({
     set({ user: null, status: 'anon' })
   },
 }))
+
+async function doInit(): Promise<void> {
+  if (!tokens.refresh) {
+    useAuth.setState({ status: 'anon' })
+    return
+  }
+  const result = await refreshSession()
+  if (result === 'ok') {
+    try {
+      const me = await request<{ id: number; username: string }>('/api/auth/me')
+      useAuth.setState({ user: me, status: 'authed' })
+    } catch {
+      tokens.clear()
+      useAuth.setState({ status: 'anon' })
+    }
+  } else if (result === 'invalid') {
+    tokens.clear()
+    useAuth.setState({ status: 'anon' })
+  } else {
+    useAuth.setState({ status: 'offline' })
+  }
+}

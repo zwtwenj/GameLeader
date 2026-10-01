@@ -17,14 +17,7 @@ export default function RaidPanel() {
   const [abandoning, setAbandoning] = useState(false)
   const [ticking, setTicking] = useState(false)
   const [error, setError] = useState('')
-  const started = useRef(false)
   const busyRef = useRef(false)
-
-  useEffect(() => {
-    if (started.current) return
-    started.current = true
-    void load().catch(() => {})
-  }, [load])
 
   const status = useRaid.getState().status
   const raidId = raid?.id

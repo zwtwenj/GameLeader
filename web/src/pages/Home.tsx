@@ -1,21 +1,12 @@
-import { useEffect, useRef } from 'react'
-
 import TeamCreate from './TeamCreate'
 import TeamView from './TeamView'
+import { loadUserData } from '../init'
 import { useAuth } from '../stores/auth'
 import { useTeam } from '../stores/team'
 
 export default function Home({ user }: { user: { id: number; username: string } }) {
   const { logout } = useAuth()
-  const { status, team, load } = useTeam()
-  const started = useRef(false)
-
-  // 进页恰好一次加载团队状态（ref 防 StrictMode 双调用）
-  useEffect(() => {
-    if (started.current) return
-    started.current = true
-    void load()
-  }, [load])
+  const { status, team } = useTeam()
 
   return (
     <div className="min-h-screen">
@@ -42,7 +33,7 @@ export default function Home({ user }: { user: { id: number; username: string } 
           <p className="text-sm text-neutral-600">服务暂不可用</p>
           <button
             className="mt-3 rounded bg-neutral-800 px-4 py-1.5 text-sm text-white hover:bg-neutral-700"
-            onClick={() => void load()}
+            onClick={() => void loadUserData()}
           >
             重试
           </button>

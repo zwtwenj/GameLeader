@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { ApiError } from '../api/client'
 import type {
@@ -20,24 +20,14 @@ const ROLE_BADGE: Record<string, string> = {
 
 export default function TeamView({ team }: { team: TeamInfo }) {
   const { recruit, acceptRecruit, load } = useTeam()
-  const { load: loadRaid } = useRaid()
+  const raidStore = useRaid()
+  const raidActive = raidStore.raid?.status === '进行中'
+
   const [candidate, setCandidate] = useState<RecruitOfferInfo | null>(null)
   const [recruiting, setRecruiting] = useState(false)
   const [accepting, setAccepting] = useState(false)
   const [error, setError] = useState('')
   const [showRaidModal, setShowRaidModal] = useState(false)
-  const started = useRef(false)
-
-  const raidStore = useRaid()
-  const raidActive = raidStore.raid?.status === '进行中'
-
-  // 团队与副本状态各加载一次（ref 防 StrictMode 双调用）
-  useEffect(() => {
-    if (started.current) return
-    started.current = true
-    void load()
-    void loadRaid().catch(() => {})
-  }, [load, loadRaid])
 
   const full = team.members.length >= team.member_cap
   const leader = team.members.find((m) => m.id === team.leader_member_id)
@@ -215,23 +205,16 @@ export function MemberCard({
   selected?: boolean
   onToggleSelected?: () => void
 }) {
-  const { removeMember, switchXinfa, load, sects, fetchSects } = useTeam()
+  const { removeMember, switchXinfa, load, sects } = useTeam()
   const [showDetail, setShowDetail] = useState(false)
   const [detail, setDetail] = useState<MemberDetailInfo | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [switching, setSwitching] = useState(false)
   const [busy, setBusy] = useState(false)
   const [cardError, setCardError] = useState('')
-  const started = useRef(false)
 
   const locked = m.in_raid_id !== null
   const canSwitch = !locked && (sects.find((s) => s.name === m.sect)?.xinfas.length ?? 0) > 1
-
-  useEffect(() => {
-    if (started.current) return
-    started.current = true
-    fetchSects().catch(() => {})
-  }, [fetchSects])
 
   async function run(fn: () => Promise<void>) {
     if (busy) return

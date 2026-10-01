@@ -1,23 +1,15 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 
 import { ApiError } from '../api/client'
 import { useTeam } from '../stores/team'
 
 export default function TeamCreate() {
-  const { sects, fetchSects, createTeam } = useTeam()
+  const { sects, createTeam } = useTeam()
   const [name, setName] = useState('')
   const [leaderName, setLeaderName] = useState('')
   const [sectId, setSectId] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const started = useRef(false)
-
-  // 门派是静态配置，进页取一次（ref 防 StrictMode 双调用）
-  useEffect(() => {
-    if (started.current) return
-    started.current = true
-    fetchSects().catch(() => setError('门派数据加载失败，请刷新重试'))
-  }, [fetchSects])
 
   const selectedSect = sects.find((s) => s.id === sectId) ?? null
   const defaultXinfa = selectedSect?.xinfas[0] ?? null
