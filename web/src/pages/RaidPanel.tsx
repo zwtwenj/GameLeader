@@ -50,7 +50,6 @@ export default function RaidPanel() {
   const [ticking, setTicking] = useState(false)
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
-  const [manual, setManual] = useState(false) // 用户手动收起/展开后不再自动切换
   const busyRef = useRef(false)
   const logRef = useRef<HTMLDivElement>(null)
   const chatRef = useRef<HTMLDivElement>(null)
@@ -61,10 +60,10 @@ export default function RaidPanel() {
   const logLength = raid?.log.length ?? 0
   const chatLength = raid?.chat.length ?? 0
 
-  // 副本进行中自动展开、结束后自动收起（用户手动操作过则尊重用户选择）
+  // 副本开始时自动展开；结束后保持展开（结算与掉落正需要看），收起只由用户操作
   useEffect(() => {
-    if (!manual) setOpen(raidStatus === '进行中')
-  }, [raidStatus, manual])
+    if (raidStatus === '进行中') setOpen(true)
+  }, [raidStatus])
 
   // 进行中每 10 秒自动推进一步
   useEffect(() => {
@@ -141,10 +140,7 @@ export default function RaidPanel() {
     return (
       <button
         className="fixed right-0 top-1/3 z-40 rounded-l-lg bg-neutral-900/90 px-1.5 py-4 text-xs tracking-widest text-white [writing-mode:vertical-rl] hover:bg-neutral-800"
-        onClick={() => {
-          setManual(true)
-          setOpen(true)
-        }}
+        onClick={() => setOpen(true)}
       >
         副本 {raid.steps.done}/{raid.steps.total}
       </button>
@@ -175,10 +171,7 @@ export default function RaidPanel() {
         </div>
         <button
           className="text-xs text-neutral-400 hover:text-neutral-900"
-          onClick={() => {
-            setManual(true)
-            setOpen(false)
-          }}
+          onClick={() => setOpen(false)}
         >
           收起
         </button>
