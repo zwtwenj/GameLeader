@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { ApiError } from '../api/client'
 import { useRaid } from '../stores/raid'
@@ -11,15 +11,34 @@ const ROLE_BADGE: Record<string, string> = {
 
 const TICK_MS = 10_000 // 开发阶段：每 10 秒推进一步
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
+/** 带标题栏的固定高度分区：内容在区域内滚动，区域高度不随内容变化。 */
+function Section({
+  title,
+  count,
+  bodyClass,
+  children,
+}: {
+  title: string
+  count?: number
+  bodyClass: string
+  children: ReactNode
+}) {
   return (
-    <p className="mb-1.5 border-b border-neutral-100 pb-1 text-xs font-medium tracking-wide text-neutral-400">
-      {children}
-    </p>
+    <div className="overflow-hidden rounded-lg border border-neutral-200">
+      <div className="flex items-center justify-between border-b border-neutral-100 bg-neutral-50 px-2.5 py-1.5">
+        <span className="text-xs font-medium text-neutral-500">{title}</span>
+        {count !== undefined && <span className="text-xs text-neutral-400">{count}</span>}
+      </div>
+      <div className={`px-2.5 py-2 ${bodyClass}`}>{children}</div>
+    </div>
   )
 }
 
-/** 副本悬浮窗：固定右侧，可收起（右缘竖排标签）/展开（功能分块侧栏）。
+function EmptyHint({ text = '暂无' }: { text?: string }) {
+  return <p className="pt-8 text-center text-xs text-neutral-300">{text}</p>
+}
+
+/** 副本悬浮窗：固定右侧，可收起（右缘竖排标签）/展开（固定分区侧栏）。
  * 副本进行中默认展开；团队成员上方不再占用版面。 */
 export default function RaidPanel() {
   const { raid, tick, abandonRaid, load } = useRaid()
@@ -128,9 +147,9 @@ export default function RaidPanel() {
     )
   }
 
-  // ---- 展开态：右侧悬浮侧栏（功能分块） ----
+  // ---- 展开态：右侧悬浮侧栏（固定分区） ----
   return (
-    <div className="fixed right-4 top-20 z-40 max-h-[85vh] w-[420px] space-y-5 overflow-y-auto rounded-xl bg-white p-5 shadow-lg ring-1 ring-neutral-200">
+    <div className="fixed right-4 top-20 z-40 w-[560px] space-y-3 rounded-xl bg-white p-4 shadow-lg ring-1 ring-neutral-200">
       {/* 头部：副本名 + 状态 + 收起 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -161,26 +180,23 @@ export default function RaidPanel() {
         </button>
       </div>
 
-      {/* 基本信息 */}
-      <div>
-        <SectionTitle>基本信息</SectionTitle>
-        <div className="grid grid-cols-3 gap-2 text-center text-sm">
-          <div className="rounded-lg bg-neutral-50 py-1.5">
-            <p className="text-xs text-neutral-400">步数</p>
-            <p className="font-medium">
-              {raid.steps.done}/{raid.steps.total}
-            </p>
-          </div>
-          <div className="rounded-lg bg-neutral-50 py-1.5">
-            <p className="text-xs text-neutral-400">进度</p>
-            <p className="font-medium">
-              {raid.progress.killed}/{raid.progress.total}
-            </p>
-          </div>
-          <div className="rounded-lg bg-neutral-50 py-1.5">
-            <p className="text-xs text-neutral-400">剩余重试</p>
-            <p className="font-medium text-amber-600">{raid.retries_left}</p>
-          </div>
+      {/* 基本信息统计条 */}
+      <div className="grid grid-cols-3 gap-2 text-center text-sm">
+        <div className="rounded-lg bg-neutral-50 py-1.5">
+          <p className="text-xs text-neutral-400">步数</p>
+          <p className="font-medium">
+            {raid.steps.done}/{raid.steps.total}
+          </p>
+        </div>
+        <div className="rounded-lg bg-neutral-50 py-1.5">
+          <p className="text-xs text-neutral-400">进度</p>
+          <p className="font-medium">
+            {raid.progress.killed}/{raid.progress.total}
+          </p>
+        </div>
+        <div className="rounded-lg bg-neutral-50 py-1.5">
+          <p className="text-xs text-neutral-400">剩余重试</p>
+          <p className="font-medium text-amber-600">{raid.retries_left}</p>
         </div>
       </div>
 
@@ -201,94 +217,96 @@ export default function RaidPanel() {
 
       {/* 当前 BOSS / 推进 */}
       {raid.status === '进行中' && raid.current_boss && (
-        <div>
-          <SectionTitle>当前 BOSS</SectionTitle>
-          <div className="rounded-lg bg-neutral-50 p-3">
-            <p className="text-sm font-medium">{raid.current_boss.name}</p>
-            <p className="mt-0.5 text-xs text-neutral-500">
-              要求装等 {raid.current_boss.gear_req} · 掉落 {raid.current_boss.drop_low}~
-              {raid.current_boss.drop_high}
-            </p>
-            <p className="mt-2 text-xs text-neutral-400">开发阶段：每 10 秒自动推进一步</p>
-            <button
-              className="mt-2 w-full rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-200 disabled:opacity-50"
-              onClick={() => void handleTick()}
-              disabled={ticking}
-            >
-              {ticking ? '推进中…' : '推进一步'}
-            </button>
+        <div className="rounded-lg border border-neutral-200">
+          <div className="border-b border-neutral-100 bg-neutral-50 px-2.5 py-1.5 text-xs font-medium text-neutral-500">
+            当前 BOSS
           </div>
-        </div>
-      )}
-
-      {/* 团队聊天 */}
-      {raid.chat.length > 0 && (
-        <div>
-          <SectionTitle>团队聊天</SectionTitle>
-          <div
-            ref={chatRef}
-            className="max-h-44 space-y-1.5 overflow-y-auto rounded-lg bg-sky-50/60 p-2.5"
-          >
-            {raid.chat.map((c, i) => (
-              <p key={i} className="text-xs leading-relaxed text-neutral-700">
-                <span className="mr-2 font-mono text-neutral-400">{c.time}</span>
-                <span className="font-medium text-neutral-900">{c.member}：</span>
-                {c.message}
+          <div className="flex items-center justify-between px-2.5 py-2">
+            <div>
+              <p className="text-sm font-medium">{raid.current_boss.name}</p>
+              <p className="mt-0.5 text-xs text-neutral-500">
+                要求装等 {raid.current_boss.gear_req} · 掉落 {raid.current_boss.drop_low}~
+                {raid.current_boss.drop_high}
               </p>
-            ))}
+            </div>
+            <div className="text-right">
+              <button
+                className="rounded border border-neutral-300 px-2.5 py-1 text-xs text-neutral-600 hover:bg-neutral-200 disabled:opacity-50"
+                onClick={() => void handleTick()}
+                disabled={ticking}
+              >
+                {ticking ? '推进中…' : '推进一步'}
+              </button>
+              <p className="mt-1 text-[10px] text-neutral-400">每 10 秒自动推进</p>
+            </div>
           </div>
         </div>
       )}
 
-      {/* 副本记录 */}
-      {raid.log.length > 0 && (
-        <div>
-          <SectionTitle>副本记录</SectionTitle>
-          <div
-            ref={logRef}
-            className="max-h-52 space-y-1 overflow-y-auto rounded-lg bg-neutral-50 p-2.5"
-          >
-            {raid.log.map((entry, i) => (
-              <p key={i} className="text-xs leading-relaxed text-neutral-700">
-                <span className="mr-1.5 font-mono text-neutral-400">{entry.time}</span>
-                {entry.message}
-              </p>
-            ))}
+      {/* 副本记录 + 团队聊天：固定高度双栏 */}
+      <div className="grid grid-cols-2 gap-3">
+        <Section title="副本记录" count={raid.log.length} bodyClass="h-44">
+          <div ref={logRef} className="space-y-1">
+            {raid.log.length === 0 ? (
+              <EmptyHint />
+            ) : (
+              raid.log.map((entry, i) => (
+                <p key={i} className="text-xs leading-relaxed text-neutral-700">
+                  <span className="mr-1.5 font-mono text-neutral-400">{entry.time}</span>
+                  {entry.message}
+                </p>
+              ))
+            )}
           </div>
-        </div>
-      )}
+        </Section>
+        <Section title="团队聊天" count={raid.chat.length} bodyClass="h-44 bg-sky-50/60">
+          <div ref={chatRef} className="space-y-1.5">
+            {raid.chat.length === 0 ? (
+              <EmptyHint text="副本进行中，成员们会在这里聊天" />
+            ) : (
+              raid.chat.map((c, i) => (
+                <p key={i} className="text-xs leading-relaxed text-neutral-700">
+                  <span className="mr-1.5 font-mono text-neutral-400">{c.time}</span>
+                  <span className="font-medium text-neutral-900">{c.member}：</span>
+                  {c.message}
+                </p>
+              ))
+            )}
+          </div>
+        </Section>
+      </div>
 
-      {/* 掉落装备 */}
-      {raid.drops.length > 0 && (
-        <div>
-          <SectionTitle>掉落装备（{raid.drops.length} 件）</SectionTitle>
+      {/* 掉落物品 + 团队成员：固定高度双栏 */}
+      <div className="grid grid-cols-2 gap-3">
+        <Section title="掉落物品" count={raid.drops.length} bodyClass="h-36">
+          {raid.drops.length === 0 ? (
+            <EmptyHint text="击败 BOSS 后掉落" />
+          ) : (
+            <div className="flex flex-wrap gap-1">
+              {raid.drops.map((d) => (
+                <span
+                  key={d.id}
+                  className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700"
+                >
+                  {d.desc}
+                </span>
+              ))}
+            </div>
+          )}
+        </Section>
+        <Section title="团队成员" count={raid.members.length} bodyClass="h-36">
           <div className="flex flex-wrap gap-1">
-            {raid.drops.map((d) => (
+            {raid.members.map((m) => (
               <span
-                key={d.id}
+                key={m.member_id}
                 className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700"
               >
-                {d.desc}
+                {m.name}
+                <span className={'ml-1 ' + (ROLE_BADGE[m.role] ?? '')}>{m.role}</span>
               </span>
             ))}
           </div>
-        </div>
-      )}
-
-      {/* 进本成员 */}
-      <div>
-        <SectionTitle>进本成员（{raid.members.length}）</SectionTitle>
-        <div className="flex flex-wrap gap-1">
-          {raid.members.map((m) => (
-            <span
-              key={m.member_id}
-              className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700"
-            >
-              {m.name}
-              <span className={'ml-1 ' + (ROLE_BADGE[m.role] ?? '')}>{m.role}</span>
-            </span>
-          ))}
-        </div>
+        </Section>
       </div>
 
       <button
