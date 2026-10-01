@@ -224,18 +224,69 @@ class RaidMember(Base):
 
 
 class EquipmentItem(Base):
-    """掉落装备实例："130外功帽子" = 装等 + 分类 + 槽位。分类仅用于竞拍时
-    过滤"符合的成员"（成员槽位装等与分类无关，切心法不清装备）。"""
+    """装备实例：副本掉落与合成装备共用本表。
+
+    - source：'副本掉落' / '合成'；合成装备 raid_id 为空、boss_name 为空串
+    - status：'仓库中'（合成产出待分配）/ '已分配'（成员穿上）/ '已分解'
+    - 掉落路径在 fight_end 中直接 assign_or_decompose（分配即穿或分解），
+      合成路径先进仓库，由玩家在仓库页手工分配"""
 
     __tablename__ = "equipment_item"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("team.id"), nullable=False)
-    raid_id: Mapped[int] = mapped_column(ForeignKey("raid.id"), nullable=False)
+    raid_id: Mapped[int | None] = mapped_column(ForeignKey("raid.id"), nullable=True)
     slot: Mapped[str] = mapped_column(String(8), nullable=False)
     equip_type: Mapped[str] = mapped_column(String(4), nullable=False)
     equip_level: Mapped[int] = mapped_column(nullable=False)
-    status: Mapped[str] = mapped_column(String(8), default="待竞拍", nullable=False)
+    status: Mapped[str] = mapped_column(String(8), default="仓库中", nullable=False)
     boss_name: Mapped[str] = mapped_column(String(32), default="", nullable=False)  # 掉落它的 BOSS
+    source: Mapped[str] = mapped_column(String(8), default="副本掉落", nullable=False)
     owner_member_id: Mapped[int | None] = mapped_column(default=None, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Item(Base):
+    """物品定义（非装备类）：category 区分材料/消耗品，可持续添加新类别条目。
+
+    装备不走本表——装备每件装等/槽位不同不可堆叠，走 equipment_item 实例表。
+    消耗品的 effect 为 JSON 数组（效果数据驱动），例如：
+      [{"type": "odds", "value": 0.1, "desc": "下一场战斗全队胜率+10%"},
+       {"type": "retry", "value": 1, "desc": "本副本额外+1次重试"}]"""
+
+    __tablename__ = "item"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)
+    category: Mapped[str] = mapped_column(String(8), nullable=False)  # 材料/消耗品
+    desc: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    effect: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+
+
+class TeamItem(Base):
+    """团队物品库存：材料与消耗品共用，按（团队, 物品）堆叠计数。"""
+
+    __tablename__ = "team_item"
+    __table_args__ = (UniqueConstraint("team_id", "item_id", name="uq_team_item"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("team.id"), nullable=False)
+    item_id: Mapped[int] = mapped_column(ForeignKey("item.id"), nullable=False)
+    quantity: Mapped[int] = mapped_column(default=0, nullable=False)
+
+
+class Recipe(Base):
+    """合成配方：消耗材料（item）与五行石，产出指定槽位/分类/装等的装备（进仓库）。
+
+    materials 为 JSON 数组：[{"item_id": 1, "quantity": 5}, ...]——配方
+    数量级很小，JSON 足够；将来配方需要复杂管理时再拆子表。"""
+
+    __tablename__ = "recipe"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    slot: Mapped[str] = mapped_column(String(8), nullable=False)
+    equip_type: Mapped[str] = mapped_column(String(4), nullable=False)
+    equip_level: Mapped[int] = mapped_column(nullable=False)
+    wuxing_cost: Mapped[int] = mapped_column(default=0, nullable=False)
+    materials: Mapped[str] = mapped_column(Text, default="[]", nullable=False)

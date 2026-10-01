@@ -1,13 +1,27 @@
+import { useEffect, useRef, useState } from 'react'
+
 import TeamCreate from './TeamCreate'
 import TeamView from './TeamView'
+import WarehouseView from './WarehouseView'
 import RaidPanel from './RaidPanel'
 import { loadUserData } from '../init'
 import { useAuth } from '../stores/auth'
 import { useTeam } from '../stores/team'
 
+type Tab = 'members' | 'warehouse'
+
 export default function Home({ user }: { user: { id: number; username: string } }) {
   const { logout } = useAuth()
   const { status, team } = useTeam()
+  const [tab, setTab] = useState<Tab>('members')
+  const started = useRef(false)
+
+  // 登录态就绪后由 App 触发一次数据装载；此处不再重复请求
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    void loadUserData()
+  }, [])
 
   return (
     <div className="min-h-screen">
@@ -43,7 +57,34 @@ export default function Home({ user }: { user: { id: number; username: string } 
       {status === 'empty' && <TeamCreate />}
       {status === 'ready' && team && (
         <>
-          <TeamView team={team} />
+          {/* 功能页签：成员 / 仓库 */}
+          <div className="mx-auto max-w-6xl px-4 pt-4">
+            <div className="flex w-fit gap-1 rounded-lg bg-white p-1 shadow-sm ring-1 ring-neutral-200">
+              {(
+                [
+                  ['members', '成员'],
+                  ['warehouse', '仓库'],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  className={
+                    'rounded-md px-5 py-1.5 text-sm font-medium transition ' +
+                    (tab === key
+                      ? 'bg-neutral-900 text-white'
+                      : 'text-neutral-600 hover:bg-neutral-100')
+                  }
+                  onClick={() => setTab(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {tab === 'members' && <TeamView team={team} />}
+          {tab === 'warehouse' && <WarehouseView />}
+
           {/* 副本悬浮窗：fixed 定位，挂在页面层级 */}
           <RaidPanel />
         </>

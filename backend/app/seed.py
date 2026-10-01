@@ -1,15 +1,34 @@
-"""种子数据灌入：空表时写入门派/心法、副本/BOSS，幂等可重复执行。"""
+"""种子数据灌入：空表时写入门派/心法、副本/BOSS、物品，幂等可重复执行。"""
 
+import json
 import logging
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .data_dungeon import BOSSES, DUNGEON, timeline_json
+from .data_warehouse import ITEMS
 from .data_xinfa import SEED
-from .models import Boss, Dungeon, Sect, Xinfa
+from .models import Boss, Dungeon, Item, Sect, Xinfa
 
 log = logging.getLogger(__name__)
+
+
+async def seed_items(db: AsyncSession) -> None:
+    count = (await db.scalar(select(func.count(Item.id)))) or 0
+    if count > 0:
+        return
+    for name, category, desc, effect in ITEMS:
+        db.add(
+            Item(
+                name=name,
+                category=category,
+                desc=desc,
+                effect=json.dumps(effect, ensure_ascii=False),
+            )
+        )
+    await db.commit()
+    log.info("物品种子数据已写入：%d 件", len(ITEMS))
 
 
 async def seed_xinfa(db: AsyncSession) -> None:

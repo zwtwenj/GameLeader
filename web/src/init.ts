@@ -9,6 +9,7 @@
 import { useAuth } from './stores/auth'
 import { useRaid } from './stores/raid'
 import { useTeam } from './stores/team'
+import { useWarehouse } from './stores/warehouse'
 
 export function initApp(): Promise<void> {
   return useAuth.getState().init()
@@ -21,5 +22,6 @@ export async function loadUserData(): Promise<void> {
     useRaid.getState().load(),
     useTeam.getState().fetchSects(),
     useRaid.getState().fetchDungeons(),
+    useWarehouse.getState().load(),
   ])
 }

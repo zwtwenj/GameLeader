@@ -23,9 +23,24 @@ from .models import (  # noqa: F401  确保 create_all 时表已注册
     User,
     Xinfa,
 )
+from .models import (  # noqa: F401  确保 create_all 时表已注册
+    Boss,
+    Dungeon,
+    EquipmentItem,
+    Item,
+    Member,
+    Raid,
+    RaidMember,
+    RecruitOffer,
+    Team,
+    TeamItem,
+    User,
+    Xinfa,
+)
 from .raid import router as raid_router, spawn_chat_task, stop_all_chat_tasks
-from .seed import seed_dungeon, seed_xinfa
+from .seed import seed_dungeon, seed_items, seed_xinfa
 from .team import router as team_router
+from .warehouse import router as warehouse_router
 
 
 @asynccontextmanager
@@ -35,6 +50,7 @@ async def lifespan(app: FastAPI):
     async with SessionLocal() as db:
         await seed_xinfa(db)
         await seed_dungeon(db)
+        await seed_items(db)
         # 服务（重启）恢复：给仍在进行中的副本补启聊天后台任务
         ongoing = (await db.execute(select(Raid.id).where(Raid.status == "进行中"))).scalars().all()
     for raid_id in ongoing:
@@ -60,6 +76,7 @@ app.include_router(auth_router)
 app.include_router(game_router)
 app.include_router(team_router)
 app.include_router(raid_router)
+app.include_router(warehouse_router)
 
 
 @app.get("/healthz")
