@@ -17,9 +17,13 @@ export interface WarehouseInfo {
 
 type Status = 'loading' | 'idle' | 'offline'
 
+// 单飞锁：并发 load（如同时多处触发）共享同一次请求
+let loadPromise: Promise<void> | null = null
+
 interface WarehouseState {
   status: Status
   data: WarehouseInfo | null
+  /** 每次进入仓库页签时调用：拉取最新库存（已有数据时静默刷新） */
   load: () => Promise<void>
 }
 
@@ -28,15 +32,23 @@ export const useWarehouse = create<WarehouseState>((set, get) => ({
   data: null,
 
   load: async () => {
-    if (get().data !== null) return // 静默刷新：已有数据不闪加载态
-    set({ status: 'loading' })
-    try {
-      const data = await request<WarehouseInfo>('/api/warehouse')
-      set({ data, status: 'idle' })
-    } catch (err) {
-      const status = (err as { status?: number }).status
-      if (status === -1) set({ status: 'offline' })
-      else throw err
-    }
+    // 已有数据时静默刷新（不闪加载态），但每次进入都要拉最新——
+    // 副本/消耗品使用会随时改变库存
+    if (get().data === null) set({ status: 'loading' })
+    loadPromise ??= request<WarehouseInfo>('/api/warehouse')
+      .then((data) => set({ data, status: 'idle' }))
+      .catch((err) => {
+        const status = (err as { status?: number }).status
+        if (get().data === null) {
+          if (status === -1) set({ status: 'offline' })
+          else throw err
+        } else {
+          throw err
+        }
+      })
+      .finally(() => {
+        loadPromise = null
+      })
+    await loadPromise
   },
 }))
