@@ -21,6 +21,8 @@ export default function RaidModal({
   const [sizeFilter, setSizeFilter] = useState<number | null>(10) // 默认 10 人
   const [dungeonId, setDungeonId] = useState<number | null>(null)
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [roleFilter, setRoleFilter] = useState<string | null>(null)
+  const [hint, setHint] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const started = useRef(false)
@@ -35,12 +37,20 @@ export default function RaidModal({
   const dungeon = dungeons.find((d) => d.id === dungeonId) ?? null
 
   function toggleMember(id: number) {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+    setHint('')
+    if (selected.has(id)) {
+      const next = new Set(selected)
+      next.delete(id)
+      setSelected(next)
+      return
+    }
+    if (dungeon && selected.size >= dungeon.size) {
+      setHint(`最多选择 ${dungeon.size} 名成员，先取消一名再更换`)
+      return
+    }
+    const next = new Set(selected)
+    next.add(id)
+    setSelected(next)
   }
 
   async function handleEnter() {
@@ -136,8 +146,31 @@ export default function RaidModal({
               /{dungeon.size}），可先查看装备、切换心法
             </p>
             <SelectedComposition team={team} selected={selected} />
+
+            <div className="mb-3 flex gap-2">
+              {([null, '坦克', '治疗', '输出'] as const).map((r) => (
+                <button
+                  key={r ?? 'all'}
+                  className={
+                    'rounded-lg px-3 py-1 text-sm ' +
+                    (roleFilter === r
+                      ? 'bg-neutral-900 text-white'
+                      : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200')
+                  }
+                  onClick={() => setRoleFilter(r)}
+                >
+                  {r ?? '全部'}
+                  {r !== null && ` ${team.members.filter((m) => m.role === r).length}`}
+                </button>
+              ))}
+            </div>
+
+            {hint && <p className="mb-3 text-sm text-amber-600">{hint}</p>}
+
             <div className="grid gap-3 sm:grid-cols-2">
-              {team.members.map((m) => {
+              {team.members
+                .filter((m) => roleFilter === null || m.role === roleFilter)
+                .map((m) => {
                 const locked = m.in_raid_id !== null
                 return (
                   <div
@@ -186,7 +219,14 @@ export default function RaidModal({
           {step === 1 ? (
             <button
               className="rounded-lg bg-neutral-900 px-5 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
-              onClick={() => setStep(2)}
+              onClick={() => {
+                // 换了人数更少的副本时，旧选择可能超员——清空重选
+                if (dungeon && selected.size > dungeon.size) {
+                  setSelected(new Set())
+                  setHint(`已选 ${selected.size} 人超过该副本的 ${dungeon.size} 人上限，请重新选择`)
+                }
+                setStep(2)
+              }}
               disabled={dungeonId === null}
             >
               下一步
