@@ -202,6 +202,8 @@ class Raid(Base):
     log: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)  # 副本记录
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 玩家已点解散（结算查看完毕）：置位后 /current 不再返回，面板从页面消失
+    closed: Mapped[bool] = mapped_column(default=False, nullable=False)
 
 
 class RaidMember(Base):

@@ -167,7 +167,7 @@ async def current_raid(
     raid = (
         await db.execute(
             select(Raid)
-            .where(Raid.team_id == team.id)
+            .where(Raid.team_id == team.id, Raid.closed.is_(False))
             .order_by(Raid.id.desc())
             .limit(1)
         )
@@ -409,6 +409,7 @@ async def abandon_raid(
         if raid.status == "进行中":
             raid.status = "已解散"
             raid.finished_at = datetime.now()
+        raid.closed = True  # 玩家已查看结算，/current 不再返回，面板消失
         members = (
             await db.execute(
                 select(Member).where(Member.in_raid_id == raid.id, Member.team_id == team.id)
