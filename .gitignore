@@ -15,3 +15,7 @@ web/dist/
 .idea/
 .vscode/
 .DS_Store
+
+# 临时令牌文件
+.tok_tmp
+.rid_tmp
