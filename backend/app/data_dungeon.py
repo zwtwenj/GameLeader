@@ -5,7 +5,7 @@ K（平衡系数）副本.md 里没有，按 plan.md 示例暂取 120，数值�
 
 import json
 
-DUNGEON = {"name": "战宝迦兰", "size": 10, "balance_k": 120}
+DUNGEON = {"name": "战宝迦兰", "size": 10, "balance_k": 110}
 
 # (seq, BOSS名, A要求装等, B掉落下限, C掉落上限)
 BOSSES = [

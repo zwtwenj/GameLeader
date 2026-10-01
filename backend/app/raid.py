@@ -19,6 +19,7 @@ from .auth import get_current_user
 from .db import get_db
 from .errors import ApiError
 from .models import (
+    COMPOSITION_RULES,
     DROP_SLOTS,
     DROP_TYPES,
     Boss,
@@ -38,10 +39,42 @@ router = APIRouter(prefix="/api/raid", tags=["raid"])
 MAX_RETRIES = 5  # 共享战斗重试次数（全副本所有 BOSS 共享）
 
 
-def decide_battle(boss: Boss, avg_gear: float) -> bool:
-    """战斗结果判定——规则待定，占位实现：70% 概率击败。
-    定稿后只改这一个函数，fight_end 节点的 true/false 即由此而来。"""
-    return random.random() < 0.7
+def decide_battle(
+    boss: Boss, avg_gear: float, roles: list[str], dungeon: Dungeon
+) -> tuple[bool, float, float, list[dict]]:
+    """战斗判定（plan.md 公式）：base = (队伍平均装等 - K) / (BOSS要求装等 - K)，
+    X = 构成缺员惩罚（缺坦/缺治/缺输按人数规格扣减），最终概率截断到 [0,1]。
+
+    返回 (是否击败, 最终胜率, 基准胜率, 惩罚明细)。"""
+    rule = COMPOSITION_RULES.get(
+        dungeon.size,
+        {"tank": 0, "heal": 0, "dps": 0, "p_tank": 0.0, "p_heal": 0.0, "p_dps": 0.0},
+    )
+    have = {
+        "坦克": roles.count("坦克"),
+        "治疗": roles.count("治疗"),
+        "输出": roles.count("输出"),
+    }
+    penalties: list[dict] = []
+    x_penalty = 0.0
+    for role_name, need_key, rate_key in (
+        ("坦克", "tank", "p_tank"),
+        ("治疗", "heal", "p_heal"),
+        ("输出", "dps", "p_dps"),
+    ):
+        missing = max(0, rule[need_key] - have[role_name])
+        if missing > 0 and rule[rate_key] > 0:
+            percent = -rule[rate_key] * missing
+            penalties.append({"role": role_name, "missing": missing, "percent": percent})
+            x_penalty += percent
+
+    if boss.gear_req > dungeon.balance_k:
+        base = (avg_gear - dungeon.balance_k) / (boss.gear_req - dungeon.balance_k)
+    else:
+        base = 10.0  # 需求装等不高于 K：稳过
+    probability = max(0.0, min(1.0, base + x_penalty))
+    win = random.random() < probability
+    return win, round(probability, 4), round(base, 4), penalties
 
 
 class RaidCreateIn(BaseModel):
@@ -259,14 +292,18 @@ async def tick_raid(
         params = node.get("params") or {}
         advance = True
         drops_desc: list[str] = []
-        avg_gear = 0.0
+        stats: dict = {}
 
-        snapshots = (
+        rows = (
             await db.execute(
-                select(RaidMember.equip_level).where(RaidMember.raid_id == raid.id)
+                select(RaidMember, Xinfa)
+                .join(Xinfa, RaidMember.xinfa_id == Xinfa.id)
+                .where(RaidMember.raid_id == raid.id)
             )
-        ).scalars().all()
-        avg_gear = round(sum(snapshots) / len(snapshots), 1) if snapshots else 0
+        ).all()
+        snapshots = [rm for rm, _ in rows]
+        roles = [x.role for _, x in rows]
+        avg_gear = round(sum(rm.equip_level for rm in snapshots) / len(snapshots), 1) if snapshots else 0
 
         if event == "mob":
             message = "正在清理路上的小怪"
@@ -283,7 +320,15 @@ async def tick_raid(
             boss = await db.get(Boss, params.get("boss_id", 0))
             if boss is None:
                 raise ApiError(422, 42200, f"时间线节点引用了不存在的BOSS（boss_id={params.get('boss_id')}）")
-            if decide_battle(boss, avg_gear):
+            win, probability, base, penalties = decide_battle(boss, avg_gear, roles, dungeon)
+            stats = {
+                "probability": probability,
+                "base": base,
+                "penalties": penalties,
+                "avg_gear": avg_gear,
+            }
+            pct_text = f"{probability:.0%}"
+            if win:
                 for _ in range(3):
                     item = EquipmentItem(
                         team_id=team.id,
@@ -295,17 +340,17 @@ async def tick_raid(
                     db.add(item)
                     await db.flush()
                     drops_desc.append(item_desc(item))
-                message = f"BOSS{boss.name}被打到了，掉落了{'、'.join(drops_desc)}"
+                message = f"BOSS{boss.name}被打倒了，掉落了{'、'.join(drops_desc)}（胜率 {pct_text}）"
                 raid.current_seq = max(raid.current_seq, boss.seq + 1)
             else:
                 advance = False
                 raid.retries_left -= 1
                 if raid.retries_left <= 0:
-                    message = "队伍被团灭了，重试次数耗尽，散团了"
+                    message = f"队伍被团灭了（胜率 {pct_text}），重试次数耗尽，散团了"
                     raid.status = "已失败"
                     raid.finished_at = datetime.now()
                 else:
-                    message = f"队伍被团灭了（剩余重试 {raid.retries_left} 次），重新集结进攻"
+                    message = f"队伍被团灭了（胜率 {pct_text}，剩余重试 {raid.retries_left} 次），重新集结进攻"
         else:
             message = f"未知事件 {event}，跳过"
 
@@ -337,6 +382,7 @@ async def tick_raid(
         "advance": advance,
         "drops": drops_desc,
         "raid_status": raid_status,
+        "stats": stats,
         "raid": await raid_payload(db, raid),
     }
 
