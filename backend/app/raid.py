@@ -58,13 +58,14 @@ SLOT_TO_COLUMN = {
 }
 
 
-def decide_battle(
+def calc_boss_odds(
     boss: Boss, avg_gear: float, roles: list[str], dungeon: Dungeon
-) -> tuple[bool, float, float, list[dict]]:
-    """战斗判定（plan.md 公式）：base = (队伍平均装等 - K) / (BOSS要求装等 - K)，
-    X = 构成缺员惩罚（缺坦/缺治/缺输按人数规格扣减），最终概率截断到 [0,1]。
+) -> dict:
+    """计算队伍对单个 BOSS 的胜率构成（纯计算，无副作用，可复用）。
 
-    返回 (是否击败, 最终胜率, 基准胜率, 惩罚明细)。"""
+    公式（plan.md）：base = (队伍平均装等 - K) / (BOSS要求装等 - K)，
+    X = 构成缺员惩罚（缺坦/缺治/缺输按人数规格扣减），最终概率截断到 [0,1]。
+    decide_battle（tick 战斗判定）与开团预览接口共用本函数。"""
     rule = COMPOSITION_RULES.get(
         dungeon.size,
         {"tank": 0, "heal": 0, "dps": 0, "p_tank": 0.0, "p_heal": 0.0, "p_dps": 0.0},
@@ -92,8 +93,20 @@ def decide_battle(
     else:
         base = 10.0  # 需求装等不高于 K：稳过
     probability = max(0.0, min(1.0, base + x_penalty))
-    win = random.random() < probability
-    return win, round(probability, 4), round(base, 4), penalties
+    return {
+        "probability": round(probability, 4),
+        "base": round(base, 4),
+        "penalties": penalties,
+    }
+
+
+def decide_battle(
+    boss: Boss, avg_gear: float, roles: list[str], dungeon: Dungeon
+) -> tuple[bool, float, float, list[dict]]:
+    """战斗判定：calc_boss_odds 算出胜率后掷点。"""
+    odds = calc_boss_odds(boss, avg_gear, roles, dungeon)
+    win = random.random() < odds["probability"]
+    return win, odds["probability"], odds["base"], odds["penalties"]
 
 
 # ---------- 时间线节点：统一分发器 + 各事件 handler ----------
@@ -270,6 +283,99 @@ NODE_HANDLERS = {
 class RaidCreateIn(BaseModel):
     dungeon_id: int
     member_ids: list[int] = Field(min_length=1, max_length=25)
+
+
+class RaidPreviewIn(BaseModel):
+    dungeon_id: int
+    member_ids: list[int] = Field(min_length=1, max_length=25)
+
+
+@router.post("/preview")
+async def preview_raid(
+    body: RaidPreviewIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """开团预览：给定副本与成员，计算对时间线上每个 BOSS 的胜率。
+    纯计算接口（不校验人数规格/锁定状态），供开团确认弹框与后续复用。"""
+    team = (
+        await db.execute(select(Team).where(Team.user_id == user.id, Team.deleted_at.is_(None)))
+    ).scalar_one_or_none()
+    if team is None:
+        raise ApiError(404, 40400, "还没有团队")
+    dungeon = await db.get(Dungeon, body.dungeon_id)
+    if dungeon is None or dungeon.deleted_at is not None:
+        raise ApiError(422, 42200, "副本不存在")
+
+    member_ids = list(dict.fromkeys(body.member_ids))
+    rows = (
+        await db.execute(
+            select(Member, Xinfa)
+            .join(Xinfa, Member.xinfa_id == Xinfa.id)
+            .where(
+                Member.id.in_(member_ids),
+                Member.team_id == team.id,
+                Member.deleted_at.is_(None),
+            )
+        )
+    ).all()
+    if len(rows) != len(member_ids):
+        raise ApiError(422, 42200, "有成员不存在或不属于你的团队")
+    roles = [x.role for _, x in rows]
+    avg_gear = round(sum(m.equip_level for m, _ in rows) / len(rows), 1) if rows else 0
+
+    # 预览的 BOSS 列表 = 时间线中出现的 BOSS（按首次出现顺序）；无时间线则退回副本 BOSS 表
+    timeline = json.loads(dungeon.timeline or "[]")
+    boss_ids: list[int] = []
+    for node in timeline:
+        bid = node.get("params", {}).get("boss_id")
+        if node.get("event") in ("fight", "fight_end") and bid and bid not in boss_ids:
+            boss_ids.append(bid)
+    if not boss_ids:
+        boss_ids = [
+            b.id
+            for b in (
+                await db.execute(
+                    select(Boss).where(Boss.dungeon_id == dungeon.id).order_by(Boss.seq)
+                )
+            ).scalars().all()
+        ]
+
+    rule = COMPOSITION_RULES.get(
+        dungeon.size,
+        {"tank": 0, "heal": 0, "dps": 0, "p_tank": 0.0, "p_heal": 0.0, "p_dps": 0.0},
+    )
+    have = {
+        "坦克": roles.count("坦克"),
+        "治疗": roles.count("治疗"),
+        "输出": roles.count("输出"),
+    }
+
+    bosses = []
+    for bid in boss_ids:
+        boss = await db.get(Boss, bid)
+        if boss is None:
+            continue
+        odds = calc_boss_odds(boss, avg_gear, roles, dungeon)
+        bosses.append(
+            {
+                "seq": boss.seq,
+                "name": boss.name,
+                "gear_req": boss.gear_req,
+                "drop_low": boss.drop_low,
+                "drop_high": boss.drop_high,
+                **odds,
+            }
+        )
+
+    return {
+        "size": dungeon.size,
+        "balance_k": dungeon.balance_k,
+        "requirement": {"坦克": rule["tank"], "治疗": rule["heal"], "输出": rule["dps"]},
+        "composition": have,
+        "avg_gear": avg_gear,
+        "bosses": bosses,
+    }
 
 
 def item_desc(item: EquipmentItem) -> str:

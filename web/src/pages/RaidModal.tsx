@@ -3,12 +3,13 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api/client'
 import type { TeamInfo } from '../stores/team'
 import { useTeam } from '../stores/team'
+import type { RaidPreviewInfo } from '../stores/raid'
 import { useRaid } from '../stores/raid'
 import { MemberCard } from './TeamView'
 
 const SIZES = [5, 10, 25] as const
 
-/** 开团弹框：step1 选副本（按人数筛选）→ step2 选成员（人数须等于副本规格）。 */
+/** 开团弹框：step1 选副本（按人数筛选）→ step2 选成员 → step3 胜率预览确认。 */
 export default function RaidModal({
   team,
   onClose,
@@ -16,8 +17,8 @@ export default function RaidModal({
   team: TeamInfo
   onClose: () => void
 }) {
-  const { dungeons, fetchDungeons, createRaid } = useRaid()
-  const [step, setStep] = useState<1 | 2>(1)
+  const { dungeons, fetchDungeons, createRaid, preview } = useRaid()
+  const [step, setStep] = useState<1 | 2 | 3>(1)
   const [sizeFilter, setSizeFilter] = useState<number | null>(10) // 默认 10 人
   const [dungeonId, setDungeonId] = useState<number | null>(null)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -25,6 +26,7 @@ export default function RaidModal({
   const [hint, setHint] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [previewInfo, setPreviewInfo] = useState<RaidPreviewInfo | null>(null)
   const started = useRef(false)
 
   useEffect(() => {
@@ -53,7 +55,21 @@ export default function RaidModal({
     setSelected(next)
   }
 
-  async function handleEnter() {
+  async function handleToConfirm() {
+    if (loading || dungeonId === null) return
+    setError('')
+    setLoading(true)
+    try {
+      setPreviewInfo(await preview(dungeonId, [...selected]))
+      setStep(3)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '出了点问题，请重试')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleConfirm() {
     if (loading || dungeonId === null) return
     setError('')
     setLoading(true)
@@ -70,7 +86,9 @@ export default function RaidModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">开团 {step === 1 ? '· 选择副本' : '· 选择成员'}</h2>
+          <h2 className="text-lg font-semibold">
+            开团 {step === 1 ? '· 选择副本' : step === 2 ? '· 选择成员' : '· 确认开团'}
+          </h2>
           <button className="text-sm text-neutral-400 hover:text-neutral-900" onClick={onClose}>
             关闭
           </button>
@@ -203,13 +221,75 @@ export default function RaidModal({
           </>
         )}
 
+        {step === 3 && previewInfo && (
+          <>
+            <div className="mb-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <Stat label="平均装等" value={String(previewInfo.avg_gear)} />
+              <Stat
+                label="构成（坦/治/输）"
+                value={`${previewInfo.composition['坦克']}/${previewInfo.composition['治疗']}/${previewInfo.composition['输出']}`}
+              />
+              <Stat
+                label="人数需求"
+                value={`${previewInfo.requirement['坦克']}/${previewInfo.requirement['治疗']}/${previewInfo.requirement['输出']}`}
+              />
+              <Stat label="平衡系数 K" value={String(previewInfo.balance_k)} />
+            </div>
+
+            {previewInfo.bosses.some((b) => b.penalties.length > 0) && (
+              <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                构成不足：
+                {previewInfo.bosses[0].penalties
+                  .map((p) => `缺${p.role} ${p.missing} 名（${p.percent * 100}%）`)
+                  .join('、')}
+              </p>
+            )}
+
+            <div className="overflow-hidden rounded-lg ring-1 ring-neutral-200">
+              <table className="w-full text-sm">
+                <thead className="bg-neutral-50 text-xs text-neutral-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">BOSS</th>
+                    <th className="px-3 py-2 text-left font-medium">要求装等</th>
+                    <th className="px-3 py-2 text-left font-medium">掉落区间</th>
+                    <th className="px-3 py-2 text-right font-medium">胜率</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewInfo.bosses.map((b) => (
+                    <tr key={b.seq} className="border-t border-neutral-100">
+                      <td className="px-3 py-2">{b.name}</td>
+                      <td className="px-3 py-2 text-neutral-500">{b.gear_req}</td>
+                      <td className="px-3 py-2 text-neutral-500">
+                        {b.drop_low}~{b.drop_high}
+                      </td>
+                      <td
+                        className={
+                          'px-3 py-2 text-right font-medium ' +
+                          (b.probability >= 0.7
+                            ? 'text-emerald-600'
+                            : b.probability >= 0.4
+                              ? 'text-amber-600'
+                              : 'text-red-600')
+                        }
+                      >
+                        {Math.round(b.probability * 100)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
         <div className="mt-5 flex justify-between">
-          {step === 2 ? (
+          {step >= 2 ? (
             <button
               className="rounded-lg border border-neutral-300 px-4 py-2 text-sm text-neutral-600 hover:bg-neutral-100"
-              onClick={() => setStep(1)}
+              onClick={() => setStep(step === 3 ? 2 : 1)}
             >
               上一步
             </button>
@@ -231,17 +311,34 @@ export default function RaidModal({
             >
               下一步
             </button>
+          ) : step === 2 ? (
+            <button
+              className="rounded-lg bg-neutral-900 px-5 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
+              onClick={() => void handleToConfirm()}
+              disabled={loading || selected.size !== (dungeon?.size ?? 0)}
+            >
+              {loading ? '计算中…' : '查看胜率'}
+            </button>
           ) : (
             <button
               className="rounded-lg bg-neutral-900 px-5 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
-              onClick={() => void handleEnter()}
-              disabled={loading || selected.size !== (dungeon?.size ?? 0)}
+              onClick={() => void handleConfirm()}
+              disabled={loading}
             >
-              {loading ? '进入中…' : '进入副本'}
+              {loading ? '进入中…' : '确认开团'}
             </button>
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-neutral-50 px-3 py-2">
+      <p className="text-xs text-neutral-400">{label}</p>
+      <p className="mt-0.5 font-semibold text-neutral-900">{value}</p>
     </div>
   )
 }

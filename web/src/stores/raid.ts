@@ -43,6 +43,26 @@ export interface RaidLogEntry {
   time: string
 }
 
+export interface BossOddsInfo {
+  seq: number
+  name: string
+  gear_req: number
+  drop_low: number
+  drop_high: number
+  probability: number
+  base: number
+  penalties: { role: string; missing: number; percent: number }[]
+}
+
+export interface RaidPreviewInfo {
+  size: number
+  balance_k: number
+  requirement: { 坦克: number; 治疗: number; 输出: number }
+  composition: { 坦克: number; 治疗: number; 输出: number }
+  avg_gear: number
+  bosses: BossOddsInfo[]
+}
+
 export interface RaidInfo {
   id: number
   status: string
@@ -65,6 +85,8 @@ interface RaidState {
   load: () => Promise<void>
   fetchDungeons: () => Promise<void>
   createRaid: (dungeonId: number, memberIds: number[]) => Promise<void>
+  /** 开团预览：当前配置对各个 BOSS 的胜率（纯计算） */
+  preview: (dungeonId: number, memberIds: number[]) => Promise<RaidPreviewInfo>
   /** 推进一个时间线节点（返回 true 进下一个 / false 原地重试） */
   tick: (raidId: number) => Promise<void>
   /** 解散队伍：进行中→已解散；已结束→仅解锁成员（记录与掉落保留） */
@@ -104,6 +126,12 @@ export const useRaid = create<RaidState>((set, get) => ({
     // 进本会锁定成员，团队页面的锁定徽章需要同步刷新
     await useTeam.getState().load()
   },
+
+  preview: (dungeonId, memberIds) =>
+    request<RaidPreviewInfo>('/api/raid/preview', {
+      method: 'POST',
+      body: JSON.stringify({ dungeon_id: dungeonId, member_ids: memberIds }),
+    }),
 
   tick: async (raidId) => {
     const data = await request<{ raid: RaidInfo }>(`/api/raid/${raidId}/tick`, {
