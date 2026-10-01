@@ -318,9 +318,11 @@ async def grant_material(ctx: NodeContext, item_id: int, qty: int) -> None:
 
 async def roll_material_loot(ctx: NodeContext, boss: Boss) -> list[str]:
     """数据化材料掉落：副本通用池（dungeon.loot）+ BOSS 专属表（boss.loot）
-    合并 roll，命中的材料入团队库存。返回战报条目。"""
+    合并 roll，材料入团队库存，明细记入实例 material_drops（供面板展示）。
+    返回战报条目。"""
     entries = json.loads(ctx.dungeon.loot or "[]") + json.loads(boss.loot or "[]")
     texts: list[str] = []
+    records: list[dict] = json.loads(ctx.raid.material_drops or "[]")
     for entry in entries:
         if random.random() >= entry.get("chance", 1.0):
             continue
@@ -331,7 +333,9 @@ async def roll_material_loot(ctx: NodeContext, boss: Boss) -> list[str]:
             continue
         qty = random.randint(entry.get("min", 1), entry.get("max", 1))
         await grant_material(ctx, item_id, qty)
-        texts.append(f"{boss.name}掉落了{name}×{qty}")
+        records.append({"boss": boss.name, "name": name, "qty": qty})
+        texts.append(f"{boss.name}掉落了{name}×{qty}，已放入仓库")
+    ctx.raid.material_drops = json.dumps(records, ensure_ascii=False)
     return texts
 
 
@@ -527,6 +531,7 @@ async def raid_payload(db: AsyncSession, raid: Raid) -> dict:
             .order_by(EquipmentItem.id)
         )
     ).all()
+    material_drops = json.loads(raid.material_drops or "[]")
 
     timeline = json.loads(dungeon.timeline or "[]")
     current_boss = None
@@ -571,6 +576,13 @@ async def raid_payload(db: AsyncSession, raid: Raid) -> dict:
                 + (f"分配给{m.name}" if m is not None else "已分解为五行石"),
             }
             for it, m in drops
+        ]
+        + [
+            {
+                "id": f"m{i}",
+                "text": f"{md['boss']}掉落了{md['name']}×{md['qty']}，已放入仓库",
+            }
+            for i, md in enumerate(material_drops)
         ],
     }
 

@@ -208,6 +208,9 @@ class Raid(Base):
     log: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)  # 副本记录
     # 团队聊天（JSON）：后端定时调 jx3api 骚话接口、随机成员播报，前端只展示
     chat: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)
+    # 材料掉落明细（JSON）：[{"boss": "王海银", "name": "天外陨铁", "qty": 1}]——
+    # 材料不在 equipment_item 表，面板掉落列表由本字段合并输出
+    material_drops: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # 玩家已点解散（结算查看完毕）：置位后 /current 不再返回，面板从页面消失
