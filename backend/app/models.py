@@ -179,6 +179,19 @@ class Boss(Base):
     dungeon: Mapped[Dungeon] = relationship(back_populates="bosses")
 
 
+# 掉落部位 → 成员装备槽字段（戒指两个槽位特殊处理，武器按门派匹配）
+SLOT_TO_COLUMN = {
+    "帽子": "hat",
+    "上衣": "chest",
+    "腰带": "belt",
+    "护腕": "wrist",
+    "下装": "pants",
+    "鞋子": "shoes",
+    "项链": "necklace",
+    "腰坠": "pendant",
+    "远程武器": "ranged",
+}
+
 # 掉落装备的槽位与分类（武器每门派独立，掉落先不做武器）
 DROP_SLOTS = ["帽子", "上衣", "腰带", "护腕", "下装", "鞋子", "项链", "腰坠", "戒指", "远程武器"]
 DROP_TYPES = ["体质", "治疗", "外功", "内功"]
@@ -298,3 +311,30 @@ class Recipe(Base):
     equip_level: Mapped[int] = mapped_column(nullable=False)
     wuxing_cost: Mapped[int] = mapped_column(default=0, nullable=False)
     materials: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+
+
+class CraftTier(Base):
+    """装备制作档位（装备配方表）：玩家任选 等级段×部位×属性类型（武器为门派）
+    组合制作，消耗在本行 cost 中统一声明（JSON，按物品名称引用）：
+      [{"name": "猫眼石", "quantity": 2}, {"name": "五行石", "quantity": 1}]
+    产出装等在 [level_min, level_max] 内随机。武器制作暂未开放。"""
+
+    __tablename__ = "craft_tier"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)  # 如 '130-140'
+    level_min: Mapped[int] = mapped_column(nullable=False)
+    level_max: Mapped[int] = mapped_column(nullable=False)
+    cost: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+
+
+class ConsumableRecipe(Base):
+    """消耗品配方：产出为 item 定义中的消耗品（堆叠入库存）。
+    与装备制作档位（craft_tier）分开——两者的产出形态不同。"""
+
+    __tablename__ = "consumable_recipe"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("item.id"), unique=True, nullable=False)
+    cost: Mapped[str] = mapped_column(Text, default="[]", nullable=False)  # [{"name","quantity"}]
+    wuxing_cost: Mapped[int] = mapped_column(default=0, nullable=False)

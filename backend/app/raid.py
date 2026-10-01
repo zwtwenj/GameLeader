@@ -32,6 +32,7 @@ from .models import (
     COMPOSITION_RULES,
     DROP_SLOTS,
     DROP_TYPES,
+    SLOT_TO_COLUMN,
     Boss,
     Dungeon,
     EquipmentItem,
@@ -120,19 +121,6 @@ WEAPON_DROP_CHANCE = 0.5  # 击败 BOSS 后额外掉落武器的概率（3+1 掉
 CHAT_INTERVAL_RANGE = (10, 20)  # 团队聊天间隔（秒，开发阶段）
 
 log = logging.getLogger(__name__)
-
-# 掉落部位 → 成员装备槽字段（戒指两个槽位特殊处理，武器按门派匹配）
-SLOT_TO_COLUMN = {
-    "帽子": "hat",
-    "上衣": "chest",
-    "腰带": "belt",
-    "护腕": "wrist",
-    "下装": "pants",
-    "鞋子": "shoes",
-    "项链": "necklace",
-    "腰坠": "pendant",
-    "远程武器": "ranged",
-}
 
 
 def calc_boss_odds(

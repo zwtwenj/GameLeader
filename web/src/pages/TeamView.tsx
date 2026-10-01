@@ -8,6 +8,7 @@ import type {
   TeamInfo,
 } from '../stores/team'
 import { useTeam } from '../stores/team'
+import { useWarehouse } from '../stores/warehouse'
 import { useRaid } from '../stores/raid'
 import RaidModal from './RaidModal'
 
@@ -91,7 +92,7 @@ export default function TeamView({ team }: { team: TeamInfo }) {
 
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="团队资金" value={String(team.fund)} />
-          <Stat label="五行石" value={String(team.wuxing_stone)} accent />
+          <Stat label="五行石" value={String(useWarehouse((s) => (s.data?.materials.find((m) => m.name === '五行石')?.quantity ?? 0)))} accent />
           <Stat
             label="成员"
             value={`${team.members.length}/${team.member_cap}`}

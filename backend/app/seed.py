@@ -7,28 +7,42 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .data_dungeon import BOSSES, DUNGEON, BOSS_LOOTS, timeline_json, loot_json
-from .data_warehouse import ITEMS
+from .data_warehouse import CRAFT_TIERS, ITEMS
 from .data_xinfa import SEED
-from .models import Boss, Dungeon, Item, Sect, Xinfa
+from .models import Boss, CraftTier, Dungeon, Item, Sect, Xinfa
 
 log = logging.getLogger(__name__)
 
 
 async def seed_items(db: AsyncSession) -> None:
+    """物品定义与制作档位：按名称/档位名幂等补种（可持续追加新条目）。"""
     count = (await db.scalar(select(func.count(Item.id)))) or 0
-    if count > 0:
-        return
-    for name, category, desc, effect in ITEMS:
-        db.add(
-            Item(
-                name=name,
-                category=category,
-                desc=desc,
-                effect=json.dumps(effect, ensure_ascii=False),
+    if count == 0:
+        for name, category, desc, effect in ITEMS:
+            db.add(
+                Item(
+                    name=name,
+                    category=category,
+                    desc=desc,
+                    effect=json.dumps(effect, ensure_ascii=False),
+                )
             )
-        )
-    await db.commit()
-    log.info("物品种子数据已写入：%d 件", len(ITEMS))
+        await db.commit()
+        log.info("物品种子数据已写入：%d 件", len(ITEMS))
+
+    tier_count = (await db.scalar(select(func.count(CraftTier.id)))) or 0
+    if tier_count == 0:
+        for tier in CRAFT_TIERS:
+            db.add(
+                CraftTier(
+                    name=tier["name"],
+                    level_min=tier["level_min"],
+                    level_max=tier["level_max"],
+                    cost=json.dumps(tier["cost"], ensure_ascii=False),
+                )
+            )
+        await db.commit()
+        log.info("制作档位种子数据已写入：%d 档", len(CRAFT_TIERS))
 
 
 async def seed_xinfa(db: AsyncSession) -> None:
