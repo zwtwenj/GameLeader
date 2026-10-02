@@ -25,3 +25,10 @@ CRAFT_TIERS = [
         ],
     }
 ]
+
+# 副本事件文案默认值（raid_event_text 空表时的兜底，键见 raid.py EVENT_DEFAULTS）
+EVENT_TEXTS = {
+    "mob": "正在清理路上的小怪",
+    "advance": "正在赶往BOSS位置",
+    "rest": "队伍原地休整，恢复状态",
+}

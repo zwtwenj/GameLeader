@@ -15,6 +15,7 @@
 import asyncio
 import json
 import logging
+import time
 import random
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -39,6 +40,7 @@ from .models import (
     Item,
     Member,
     Raid,
+    RaidEventText,
     RaidMember,
     Sect,
     Team,
@@ -49,6 +51,53 @@ from .models import (
 from .services.jx3api import client as jx3_client
 
 router = APIRouter(prefix="/api/raid", tags=["raid"])
+
+log = logging.getLogger(__name__)
+
+MAX_RETRIES = 5  # 共享战斗重试次数（全副本所有 BOSS 共享）
+WEAPON_DROP_CHANCE = 0.5  # 击败 BOSS 后额外掉落武器的概率（3+1 掉落的"1"）
+CHAT_INTERVAL_RANGE = (10, 20)  # 团队聊天间隔（秒，开发阶段）
+
+# 事件文案：DB 表 raid_event_text 覆盖默认值，进程内缓存 + TTL 懒刷新
+# （高并发下不会每步查库；改文案后最多 TTL 秒生效，或重启立即生效）
+EVENT_DEFAULTS = {
+    "mob": "正在清理路上的小怪",
+    "advance": "正在赶往BOSS位置",
+    "rest": "队伍原地休整，恢复状态",
+    "fight": "正在与{boss}作战",
+    "fight_end_win": "BOSS{boss}被打倒了，掉落了{entries}（胜率 {probability}）",
+    "fight_end_lose": "队伍被团灭了（胜率 {probability}，剩余重试 {retries} 次），重新集结进攻",
+    "fight_end_lose_final": "队伍被团灭了（胜率 {probability}），重试次数耗尽，散团了",
+}
+EVENT_TEXT_TTL = 60.0  # 秒
+_event_texts_cache: dict[str, str] = {}
+_event_texts_at: float = 0.0
+
+
+async def get_event_texts() -> dict[str, str]:
+    """事件文案（DB 表覆盖默认值），带 TTL 缓存——高并发下不会每步查库。"""
+    global _event_texts_cache, _event_texts_at
+    now = time.time()
+    if _event_texts_cache and now - _event_texts_at < EVENT_TEXT_TTL:
+        return _event_texts_cache
+    async with SessionLocal() as db:
+        rows = (await db.execute(select(RaidEventText))).scalars().all()
+    texts = dict(EVENT_DEFAULTS)
+    for r in rows:
+        texts[r.event] = r.text
+    _event_texts_cache = texts
+    _event_texts_at = now
+    return texts
+
+
+class _SafeDict(dict):
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
+def render(text: str, **params) -> str:
+    """文案模板渲染：缺失的占位符原样保留，不抛错。"""
+    return text.format_map(_SafeDict(**params))
 
 # ---------- 团队聊天后台任务：副本进行期间随机成员播报骚话 ----------
 
@@ -114,13 +163,6 @@ async def _chat_loop(raid_id: int) -> None:
                 await db.commit()
     except asyncio.CancelledError:
         pass  # 解散/关服时被取消，正常退出
-
-
-MAX_RETRIES = 5  # 共享战斗重试次数（全副本所有 BOSS 共享）
-WEAPON_DROP_CHANCE = 0.5  # 击败 BOSS 后额外掉落武器的概率（3+1 掉落的"1"）
-CHAT_INTERVAL_RANGE = (10, 20)  # 团队聊天间隔（秒，开发阶段）
-
-log = logging.getLogger(__name__)
 
 
 def calc_boss_odds(
@@ -212,20 +254,24 @@ async def _get_boss(ctx: NodeContext, params: dict) -> Boss:
 
 
 async def handle_mob(ctx: NodeContext, params: dict) -> NodeOutcome:
-    return NodeOutcome(advance=True, message="正在清理路上的小怪")
+    texts = await get_event_texts()
+    return NodeOutcome(advance=True, message=texts["mob"])
 
 
 async def handle_advance(ctx: NodeContext, params: dict) -> NodeOutcome:
-    return NodeOutcome(advance=True, message="正在赶往BOSS位置")
+    texts = await get_event_texts()
+    return NodeOutcome(advance=True, message=texts["advance"])
 
 
 async def handle_rest(ctx: NodeContext, params: dict) -> NodeOutcome:
-    return NodeOutcome(advance=True, message="队伍原地休整，恢复状态")
+    texts = await get_event_texts()
+    return NodeOutcome(advance=True, message=texts["rest"])
 
 
 async def handle_fight(ctx: NodeContext, params: dict) -> NodeOutcome:
     boss = await _get_boss(ctx, params)
-    return NodeOutcome(advance=True, message=f"正在与{boss.name}作战")
+    texts = await get_event_texts()
+    return NodeOutcome(advance=True, message=render(texts["fight"], boss=boss.name))
 
 
 async def create_drop_item(ctx: NodeContext, boss: Boss, weapon: bool) -> EquipmentItem:
@@ -332,6 +378,7 @@ async def handle_fight_end(ctx: NodeContext, params: dict) -> NodeOutcome:
         boss, ctx.avg_gear, ctx.roles, ctx.dungeon
     )
     pct_text = f"{probability:.0%}"
+    texts = await get_event_texts()
     stats = {
         "probability": probability,
         "base": base,
@@ -346,12 +393,18 @@ async def handle_fight_end(ctx: NodeContext, params: dict) -> NodeOutcome:
             ctx.raid.finished_at = datetime.now()
             return NodeOutcome(
                 False,
-                f"队伍被团灭了（胜率 {pct_text}），重试次数耗尽，散团了",
+                render(
+                    texts["fight_end_lose_final"], probability=pct_text
+                ),
                 stats=stats,
             )
         return NodeOutcome(
             False,
-            f"队伍被团灭了（胜率 {pct_text}，剩余重试 {ctx.raid.retries_left} 次），重新集结进攻",
+            render(
+                texts["fight_end_lose"],
+                probability=pct_text,
+                retries=ctx.raid.retries_left,
+            ),
             stats=stats,
         )
 
@@ -372,7 +425,12 @@ async def handle_fight_end(ctx: NodeContext, params: dict) -> NodeOutcome:
     ctx.raid.current_seq = max(ctx.raid.current_seq, boss.seq + 1)
     return NodeOutcome(
         advance=True,
-        message=f"BOSS{boss.name}被打倒了，掉落了{'、'.join(entries + material_texts)}（胜率 {pct_text}）",
+        message=render(
+            texts["fight_end_win"],
+            boss=boss.name,
+            entries="、".join(entries + material_texts),
+            probability=pct_text,
+        ),
         drops=drops,
         stats=stats,
     )

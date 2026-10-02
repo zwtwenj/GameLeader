@@ -313,6 +313,20 @@ class Recipe(Base):
     materials: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
 
 
+class RaidEventText(Base):
+    """副本事件文案表：event 唯一键 → 文案模板（占位符由 handler 填充，
+    如 {boss}/{entries}/{probability}）。
+
+    纯文案事件（改提示语）直接改表即可生效（后端带 TTL 缓存）；
+    带新机制的事件仍需要代码 handler——数据管"说什么"，代码管"做什么"。"""
+
+    __tablename__ = "raid_event_text"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    event: Mapped[str] = mapped_column(String(24), unique=True, nullable=False)
+    text: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
 class CraftTier(Base):
     """装备制作档位（装备配方表）：玩家任选 等级段×部位×属性类型（武器为门派）
     组合制作，消耗在本行 cost 中统一声明（JSON，按物品名称引用）：

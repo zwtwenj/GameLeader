@@ -10,9 +10,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .data_dungeon import BOSSES, DUNGEON, BOSS_LOOTS, timeline_json, loot_json
-from .data_warehouse import CRAFT_TIERS, ITEMS
+from .data_warehouse import CRAFT_TIERS, EVENT_TEXTS, ITEMS
 from .data_xinfa import SEED
-from .models import Boss, CraftTier, Dungeon, Item, Sect, Xinfa
+from .models import (
+    Boss,
+    CraftTier,
+    Dungeon,
+    Item,
+    RaidEventText,
+    Sect,
+    Xinfa,
+)
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +60,16 @@ async def seed_items(db: AsyncSession) -> None:
         )
     await db.commit()
     log.info("制作档位种子数据已写入：%d 档", len(CRAFT_TIERS))
+
+
+async def seed_event_texts(db: AsyncSession) -> None:
+    count = (await db.scalar(select(func.count(RaidEventText.id)))) or 0
+    if count > 0:
+        return
+    for event, text in EVENT_TEXTS.items():
+        db.add(RaidEventText(event=event, text=text))
+    await db.commit()
+    log.info("事件文案种子数据已写入：%d 条", len(EVENT_TEXTS))
 
 
 async def seed_xinfa(db: AsyncSession) -> None:
