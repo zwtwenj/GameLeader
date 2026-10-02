@@ -45,14 +45,16 @@ EQUIP_TYPES = ["外功", "内功", "体质", "治疗"]
 
 
 async def get_stock(
-    db: AsyncSession, team_id: int, item_name: str
+    db: AsyncSession, team_id: int, item_id: int
 ) -> tuple[TeamItem | None, Item]:
     """取团队某物品的库存行与定义（无库存行时仍返回定义，数量按 0 处理）。"""
-    item = (await db.execute(select(Item).where(Item.name == item_name))).scalar_one()
+    item = await db.get(Item, item_id)
+    if item is None:
+        raise ApiError(422, 42200, f"物品不存在（item_id={item_id}）")
     tm = (
         await db.execute(
             select(TeamItem).where(
-                TeamItem.team_id == team_id, TeamItem.item_id == item.id
+                TeamItem.team_id == team_id, TeamItem.item_id == item_id
             )
         )
     ).scalar_one_or_none()
@@ -110,6 +112,13 @@ async def warehouse_overview(
         await db.execute(select(CraftTier).order_by(CraftTier.level_min))
     ).scalars().all()
 
+    tiers = (
+        await db.execute(select(CraftTier).order_by(CraftTier.level_min))
+    ).scalars().all()
+    items_by_id = {
+        it.id: it for it in (await db.execute(select(Item))).scalars().all()
+    }
+
     return {
         "materials": grouped["材料"],
         "consumables": grouped["消耗品"],
@@ -130,7 +139,15 @@ async def warehouse_overview(
                 "name": t.name,
                 "level_min": t.level_min,
                 "level_max": t.level_max,
-                "cost": json.loads(t.cost or "[]"),
+                "cost": [
+                    {
+                        "item_id": c["item_id"],
+                        "name": items_by_id[c["item_id"]].name,
+                        "quantity": c["quantity"],
+                    }
+                    for c in json.loads(t.cost or "[]")
+                    if c["item_id"] in items_by_id
+                ],
             }
             for t in tiers
         ],
@@ -169,20 +186,20 @@ async def craft_equipment(
         raise ApiError(422, 42200, "制作档位不存在")
     cost = json.loads(tier.cost or "[]")
 
-    # 校验并扣减材料（含五行石——已归类为材料，走统一库存）
-    stocks: dict[str, tuple[TeamItem | None, Item]] = {}
+    # 校验并扣减材料（含五行石——已归类为材料，走统一库存；消耗按 item_id 引用）
+    stocks: dict[int, tuple[TeamItem | None, Item]] = {}
     for entry in cost:
-        tm, item = await get_stock(db, team.id, entry["name"])
+        tm, item = await get_stock(db, team.id, entry["item_id"])
         have = tm.quantity if tm else 0
         if have < entry["quantity"]:
             raise ApiError(
                 409,
                 40900,
-                f"「{entry['name']}」数量不足（{have}/{entry['quantity']}）",
+                f"「{item.name}」数量不足（{have}/{entry['quantity']}）",
             )
-        stocks[entry["name"]] = (tm, item)
+        stocks[entry["item_id"]] = (tm, item)
     for entry in cost:
-        tm, _ = stocks[entry["name"]]
+        tm, _ = stocks[entry["item_id"]]
         tm.quantity -= entry["quantity"]
 
     item = EquipmentItem(
@@ -355,7 +372,16 @@ async def decompose_warehouse_item(
             raise ApiError(409, 40900, "该装备已分配")
 
         item.status = "已分解"
-        tm, wuxing_item = await get_stock(db, team.id, "五行石")
+        wuxing_item = (
+            await db.execute(select(Item).where(Item.name == "五行石"))
+        ).scalar_one()
+        tm = (
+            await db.execute(
+                select(TeamItem).where(
+                    TeamItem.team_id == team.id, TeamItem.item_id == wuxing_item.id
+                )
+            )
+        ).scalar_one_or_none()
         if tm is None:
             tm = TeamItem(team_id=team.id, item_id=wuxing_item.id, quantity=0)
             db.add(tm)

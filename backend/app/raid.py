@@ -189,7 +189,7 @@ class NodeContext:
     avg_gear: float  # 进本成员平均装等（快照）
     members: list[tuple[Member, Xinfa, Sect]]  # 团队存活成员（分配掉落用）
     sect_names: list[str]  # 全部门派名（武器掉落用）
-    material_items: dict[str, int]  # 材料名 → item_id（数据化材料掉落的入库目标）
+    material_items: dict[int, Item]  # 材料类 item（id → 定义），掉落表条目按 id 引用
 
 
 @dataclass
@@ -306,23 +306,22 @@ async def grant_material(ctx: NodeContext, item_id: int, qty: int) -> None:
 
 async def roll_material_loot(ctx: NodeContext, boss: Boss) -> list[str]:
     """数据化材料掉落：副本通用池（dungeon.loot）+ BOSS 专属表（boss.loot）
-    合并 roll，材料入团队库存，明细记入实例 material_drops（供面板展示）。
-    返回战报条目。"""
+    合并 roll（条目按 item_id 引用材料定义），材料入团队库存，明细记入实例
+    material_drops。返回战报条目。"""
     entries = json.loads(ctx.dungeon.loot or "[]") + json.loads(boss.loot or "[]")
     texts: list[str] = []
     records: list[dict] = json.loads(ctx.raid.material_drops or "[]")
     for entry in entries:
+        item = ctx.material_items.get(entry.get("item_id"))
+        if item is None:
+            log.warning("掉落表引用了不存在的材料 item_id=%s", entry.get("item_id"))
+            continue
         if random.random() >= entry.get("chance", 1.0):
             continue
-        name = entry.get("name", "")
-        item_id = ctx.material_items.get(name)
-        if item_id is None:
-            log.warning("掉落表引用了不存在的材料：%s", name)
-            continue
         qty = random.randint(entry.get("min", 1), entry.get("max", 1))
-        await grant_material(ctx, item_id, qty)
-        records.append({"boss": boss.name, "name": name, "qty": qty})
-        texts.append(f"{boss.name}掉落了{name}×{qty}，已放入仓库")
+        await grant_material(ctx, item.id, qty)
+        records.append({"boss": boss.name, "name": item.name, "qty": qty})
+        texts.append(f"{boss.name}掉落了{item.name}×{qty}，已放入仓库")
     ctx.raid.material_drops = json.dumps(records, ensure_ascii=False)
     return texts
 
@@ -737,12 +736,10 @@ async def tick_raid(
         ).all()
         sect_names = [s for s, in (await db.execute(select(Sect.name))).all()]
         material_items = {
-            name: id_
-            for name, id_ in (
-                await db.execute(
-                    select(Item.name, Item.id).where(Item.category == "材料")
-                )
-            ).all()
+            it.id: it
+            for it in (
+                await db.execute(select(Item).where(Item.category == "材料"))
+            ).scalars().all()
         }
 
         ctx = NodeContext(

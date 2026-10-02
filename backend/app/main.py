@@ -48,9 +48,9 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with SessionLocal() as db:
+        await seed_items(db)
         await seed_xinfa(db)
         await seed_dungeon(db)
-        await seed_items(db)
         # 服务（重启）恢复：给仍在进行中的副本补启聊天后台任务
         ongoing = (await db.execute(select(Raid.id).where(Raid.status == "进行中"))).scalars().all()
     for raid_id in ongoing:

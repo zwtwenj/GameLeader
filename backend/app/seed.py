@@ -1,4 +1,7 @@
-"""种子数据灌入：空表时写入门派/心法、副本/BOSS、物品，幂等可重复执行。"""
+"""种子数据灌入：空表时写入门派/心法、副本/BOSS、物品与制作档位，幂等可重复执行。
+
+data_* 文件里的引用材料用名称书写（策划可读），灌库时统一解析为 item_id——
+掉落表/配方的存储是 ID 引用（策划工具里通过筛选选取，存 id 而非文字）。"""
 
 import json
 import logging
@@ -15,7 +18,7 @@ log = logging.getLogger(__name__)
 
 
 async def seed_items(db: AsyncSession) -> None:
-    """物品定义与制作档位：按名称/档位名幂等补种（可持续追加新条目）。"""
+    """物品定义 + 制作档位（档位消耗按名称解析为 item_id）。"""
     count = (await db.scalar(select(func.count(Item.id)))) or 0
     if count == 0:
         for name, category, desc, effect in ITEMS:
@@ -31,18 +34,24 @@ async def seed_items(db: AsyncSession) -> None:
         log.info("物品种子数据已写入：%d 件", len(ITEMS))
 
     tier_count = (await db.scalar(select(func.count(CraftTier.id)))) or 0
-    if tier_count == 0:
-        for tier in CRAFT_TIERS:
-            db.add(
-                CraftTier(
-                    name=tier["name"],
-                    level_min=tier["level_min"],
-                    level_max=tier["level_max"],
-                    cost=json.dumps(tier["cost"], ensure_ascii=False),
-                )
+    if tier_count > 0:
+        return
+    name_to_id = dict((await db.execute(select(Item.name, Item.id))).all())
+    for tier in CRAFT_TIERS:
+        cost = [
+            {"item_id": name_to_id[e["name"]], "quantity": e["quantity"]}
+            for e in tier["cost"]
+        ]
+        db.add(
+            CraftTier(
+                name=tier["name"],
+                level_min=tier["level_min"],
+                level_max=tier["level_max"],
+                cost=json.dumps(cost, ensure_ascii=False),
             )
-        await db.commit()
-        log.info("制作档位种子数据已写入：%d 档", len(CRAFT_TIERS))
+        )
+    await db.commit()
+    log.info("制作档位种子数据已写入：%d 档", len(CRAFT_TIERS))
 
 
 async def seed_xinfa(db: AsyncSession) -> None:
@@ -70,7 +79,20 @@ async def seed_dungeon(db: AsyncSession) -> None:
     count = (await db.scalar(select(func.count(Boss.id)))) or 0
     if count > 0:
         return
-    dungeon = Dungeon(**DUNGEON, loot=loot_json(DUNGEON_LOOT))
+    name_to_id = dict((await db.execute(select(Item.name, Item.id))).all())
+
+    def material_loot(entries: list[dict]) -> list[dict]:
+        return [
+            {
+                "item_id": name_to_id[e["name"]],
+                "min": e["min"],
+                "max": e["max"],
+                "chance": e["chance"],
+            }
+            for e in entries
+        ]
+
+    dungeon = Dungeon(**DUNGEON, loot=loot_json(material_loot(DUNGEON_LOOT)))
     db.add(dungeon)
     await db.flush()
     boss_ids = []
@@ -82,7 +104,7 @@ async def seed_dungeon(db: AsyncSession) -> None:
             gear_req=gear_req,
             drop_low=drop_low,
             drop_high=drop_high,
-            loot=loot_json(BOSS_LOOTS.get(name, [])),
+            loot=loot_json(material_loot(BOSS_LOOTS.get(name, []))),
         )
         db.add(boss)
         await db.flush()
