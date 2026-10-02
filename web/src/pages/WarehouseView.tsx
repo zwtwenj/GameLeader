@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 
 import { ApiError } from '../api/client'
-import type { WarehouseEquipmentInfo } from '../stores/warehouse'
-import { useTeam } from '../stores/team'
+import type {
+  AssignableMemberInfo,
+  WarehouseEquipmentInfo,
+} from '../stores/warehouse'
 import { useWarehouse } from '../stores/warehouse'
 import CraftModal from './CraftModal'
 
@@ -106,7 +108,8 @@ export default function WarehouseView() {
   )
 }
 
-/** 仓库装备行：展开后选择成员分配（后端校验属性重合与部位装等），或分解。 */
+/** 仓库装备行：展开分配时向后端拉可分配名单（属性/门派/部位装等规则在后端
+ * 统一判定），选择成员后确认；也可分解为五行石。 */
 function WarehouseEquipmentRow({
   item,
   onError,
@@ -114,22 +117,12 @@ function WarehouseEquipmentRow({
   item: WarehouseEquipmentInfo
   onError: (msg: string) => void
 }) {
-  const { assignEquipment, decomposeEquipment } = useWarehouse()
-  const members = useTeam((s) => s.team?.members ?? [])
-  const sects = useTeam((s) => s.sects)
+  const { assignEquipment, decomposeEquipment, fetchAssignable } = useWarehouse()
   const [assigning, setAssigning] = useState(false)
+  const [loadingList, setLoadingList] = useState(false)
+  const [candidates, setCandidates] = useState<AssignableMemberInfo[] | null>(null)
   const [memberChoice, setMemberChoice] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
-
-  // 前端过滤可分配成员：属性重合（武器按门派），副本中的成员除外
-  const eligible = members.filter((m) => {
-    if (m.in_raid_id !== null) return false
-    if (item.slot === '武器') return m.sect === item.equip_type
-    const equipType = sects
-      .find((s) => s.name === m.sect)
-      ?.xinfas.find((x) => x.name === m.xinfa)?.equip_type
-    return equipType === item.equip_type
-  })
 
   async function handleAssign() {
     if (busy || memberChoice === null) return
@@ -157,16 +150,31 @@ function WarehouseEquipmentRow({
     }
   }
 
+  // 展开分配时向后端拉可分配名单
+  async function toggleAssign() {
+    if (assigning) {
+      setAssigning(false)
+      return
+    }
+    setAssigning(true)
+    setCandidates(null)
+    setLoadingList(true)
+    try {
+      setCandidates(await fetchAssignable(item.id))
+    } catch {
+      setCandidates([])
+    } finally {
+      setLoadingList(false)
+    }
+  }
+
   return (
     <div className="rounded-lg bg-white px-3 py-2 ring-1 ring-neutral-200">
       <p className="text-sm font-medium">{item.text}</p>
       <div className="mt-1.5 flex gap-2">
         <button
           className="rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
-          onClick={() => {
-            setAssigning(!assigning)
-            setMemberChoice(null)
-          }}
+          onClick={() => void toggleAssign()}
           disabled={busy}
         >
           分配
@@ -186,19 +194,25 @@ function WarehouseEquipmentRow({
             value={memberChoice ?? ''}
             onChange={(e) => setMemberChoice(Number(e.target.value) || null)}
           >
-            <option value="">
-              {eligible.length > 0 ? '选择成员' : '没有符合属性的成员'}
-            </option>
-            {eligible.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}（{m.sect}·{m.xinfa}）
-              </option>
-            ))}
+            {loadingList ? (
+              <option value="">加载成员…</option>
+            ) : (candidates?.length ?? 0) === 0 ? (
+              <option value="">没有可分配的成员</option>
+            ) : (
+              <>
+                <option value="">选择成员</option>
+                {candidates!.map((m) => (
+                  <option key={m.member_id} value={m.member_id}>
+                    {m.name}（{m.sect}·{m.xinfa}，该部位 {m.slot_level}）
+                  </option>
+                ))}
+              </>
+            )}
           </select>
           <button
             className="rounded bg-neutral-900 px-2.5 py-1 text-xs text-white hover:bg-neutral-800 disabled:opacity-50"
             onClick={handleAssign}
-            disabled={busy || memberChoice === null}
+            disabled={busy || memberChoice === null || loadingList}
           >
             确认
           </button>

@@ -27,6 +27,14 @@ export interface WarehouseEquipmentInfo {
   source: string
 }
 
+export interface AssignableMemberInfo {
+  member_id: number
+  name: string
+  sect: string
+  xinfa: string
+  slot_level: number
+}
+
 export interface WarehouseInfo {
   materials: WarehouseItemInfo[]
   consumables: WarehouseItemInfo[]
@@ -50,6 +58,8 @@ interface WarehouseState {
   assignEquipment: (itemId: number, memberId: number) => Promise<void>
   /** 分解仓库装备（五行石+1） */
   decomposeEquipment: (itemId: number) => Promise<void>
+  /** 可分配该装备的成员名单（后端按属性/门派/部位装等算好） */
+  fetchAssignable: (itemId: number) => Promise<AssignableMemberInfo[]>
 }
 
 export const useWarehouse = create<WarehouseState>((set, get) => ({
@@ -97,4 +107,7 @@ export const useWarehouse = create<WarehouseState>((set, get) => ({
     await request(`/api/warehouse/items/${itemId}/decompose`, { method: 'POST' })
     await get().load()
   },
+
+  fetchAssignable: (itemId) =>
+    request<AssignableMemberInfo[]>(`/api/warehouse/items/${itemId}/assignable`),
 }))

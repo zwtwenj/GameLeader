@@ -210,6 +210,61 @@ class AssignIn(BaseModel):
     member_id: int
 
 
+@router.get("/items/{item_id}/assignable")
+async def assignable_members(
+    item_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """列出可分配该装备的成员（分配下拉数据源）：属性重合（武器按门派）、
+    非副本中、对应部位装等低于该装备。分配规则唯一实现处，前端只渲染。"""
+    team = await get_my_team(db, user.id)
+    if team is None:
+        raise ApiError(404, 40400, "还没有团队")
+    item = await db.get(EquipmentItem, item_id)
+    if item is None or item.team_id != team.id:
+        raise ApiError(404, 40400, "装备不存在")
+
+    col = "weapon" if item.slot == "武器" else SLOT_TO_COLUMN.get(item.slot)
+    if col is None:
+        raise ApiError(422, 42200, "未知的装备槽位")
+
+    rows = (
+        await db.execute(
+            select(Member, Xinfa, Sect)
+            .join(Xinfa, Member.xinfa_id == Xinfa.id)
+            .join(Sect, Xinfa.sect_id == Sect.id)
+            .where(
+                Member.team_id == team.id,
+                Member.deleted_at.is_(None),
+                Member.in_raid_id.is_(None),
+            )
+            .order_by(Member.id)
+        )
+    ).all()
+
+    result = []
+    for m, x, s in rows:
+        if item.slot == "武器":
+            if s.name != item.equip_type:
+                continue
+        elif x.equip_type != item.equip_type:
+            continue
+        slot_level = getattr(m, f"{col}_level")
+        if slot_level >= item.equip_level:
+            continue
+        result.append(
+            {
+                "member_id": m.id,
+                "name": m.name,
+                "sect": s.name,
+                "xinfa": x.name,
+                "slot_level": slot_level,
+            }
+        )
+    return result
+
+
 @router.post("/items/{item_id}/assign")
 async def assign_warehouse_item(
     item_id: int,
