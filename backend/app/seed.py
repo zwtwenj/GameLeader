@@ -10,10 +10,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .data_dungeon import BOSSES, DUNGEON, BOSS_LOOTS, timeline_json, loot_json
-from .data_warehouse import CRAFT_TIERS, EVENT_TEXTS, ITEMS
+from .data_warehouse import CONSUMABLE_RECIPES, CRAFT_TIERS, EVENT_TEXTS, ITEMS
 from .data_xinfa import SEED
 from .models import (
     Boss,
+    ConsumableRecipe,
     CraftTier,
     Dungeon,
     Item,
@@ -26,40 +27,69 @@ log = logging.getLogger(__name__)
 
 
 async def seed_items(db: AsyncSession) -> None:
-    """物品定义 + 制作档位（档位消耗按名称解析为 item_id）。"""
-    count = (await db.scalar(select(func.count(Item.id)))) or 0
-    if count == 0:
-        for name, category, desc, effect in ITEMS:
+    """物品定义 + 制作档位 + 消耗品配方。
+
+    物品与配方逐条幂等（库里缺哪条补哪条，已有的不覆盖）；配方/档位
+    消耗按名称书写，灌库时解析为 item_id（与掉落表同约定）。"""
+    existing = set((await db.execute(select(Item.name))).scalars().all())
+    added = [
+        Item(
+            name=name,
+            category=category,
+            desc=desc,
+            effect=json.dumps(effect, ensure_ascii=False),
+        )
+        for name, category, desc, effect in ITEMS
+        if name not in existing
+    ]
+    if added:
+        db.add_all(added)
+        await db.commit()
+        log.info("物品种子数据新增：%d 件", len(added))
+
+    name_to_id = dict((await db.execute(select(Item.name, Item.id))).all())
+
+    tier_count = (await db.scalar(select(func.count(CraftTier.id)))) or 0
+    if tier_count == 0:
+        for tier in CRAFT_TIERS:
+            cost = [
+                {"item_id": name_to_id[e["name"]], "quantity": e["quantity"]}
+                for e in tier["cost"]
+            ]
             db.add(
-                Item(
-                    name=name,
-                    category=category,
-                    desc=desc,
-                    effect=json.dumps(effect, ensure_ascii=False),
+                CraftTier(
+                    name=tier["name"],
+                    level_min=tier["level_min"],
+                    level_max=tier["level_max"],
+                    cost=json.dumps(cost, ensure_ascii=False),
                 )
             )
         await db.commit()
-        log.info("物品种子数据已写入：%d 件", len(ITEMS))
+        log.info("制作档位种子数据已写入：%d 档", len(CRAFT_TIERS))
 
-    tier_count = (await db.scalar(select(func.count(CraftTier.id)))) or 0
-    if tier_count > 0:
-        return
-    name_to_id = dict((await db.execute(select(Item.name, Item.id))).all())
-    for tier in CRAFT_TIERS:
+    recipe_items = set(
+        (await db.execute(select(ConsumableRecipe.item_id))).scalars().all()
+    )
+    added_recipes = []
+    for rc in CONSUMABLE_RECIPES:
+        item_id = name_to_id.get(rc["item"])
+        if item_id is None or item_id in recipe_items:
+            continue
         cost = [
             {"item_id": name_to_id[e["name"]], "quantity": e["quantity"]}
-            for e in tier["cost"]
+            for e in rc["cost"]
         ]
-        db.add(
-            CraftTier(
-                name=tier["name"],
-                level_min=tier["level_min"],
-                level_max=tier["level_max"],
+        added_recipes.append(
+            ConsumableRecipe(
+                item_id=item_id,
                 cost=json.dumps(cost, ensure_ascii=False),
+                wuxing_cost=rc["wuxing_cost"],
             )
         )
-    await db.commit()
-    log.info("制作档位种子数据已写入：%d 档", len(CRAFT_TIERS))
+    if added_recipes:
+        db.add_all(added_recipes)
+        await db.commit()
+        log.info("消耗品配方种子数据新增：%d 条", len(added_recipes))
 
 
 async def seed_event_texts(db: AsyncSession) -> None:

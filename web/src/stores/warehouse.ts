@@ -35,11 +35,30 @@ export interface AssignableMemberInfo {
   slot_level: number
 }
 
+export interface ConsumableCostInfo {
+  item_id: number
+  name: string
+  quantity: number
+  /** 当前团队库存（服务端随配方一并返回） */
+  stock: number
+}
+
+export interface ConsumableRecipeInfo {
+  id: number
+  item_id: number
+  name: string
+  desc: string
+  effect: { type: string; value: number; desc: string }[]
+  wuxing_cost: number
+  cost: ConsumableCostInfo[]
+}
+
 export interface WarehouseInfo {
   materials: WarehouseItemInfo[]
   consumables: WarehouseItemInfo[]
   equipment: WarehouseEquipmentInfo[]
   craft_tiers: CraftTierInfo[]
+  consumable_recipes: ConsumableRecipeInfo[]
 }
 
 type Status = 'loading' | 'idle' | 'offline'
@@ -54,6 +73,8 @@ interface WarehouseState {
   load: () => Promise<void>
   /** 制作装备：扣材料/五行石，产出装备实例进仓库 */
   craftEquipment: (tierId: number, slot: string, equipType: string) => Promise<void>
+  /** 制作消耗品：按配方扣材料，产出堆叠入仓库 */
+  craftConsumable: (recipeId: number) => Promise<void>
   /** 手工分配仓库装备给成员 */
   assignEquipment: (itemId: number, memberId: number) => Promise<void>
   /** 分解仓库装备（五行石+1） */
@@ -91,6 +112,14 @@ export const useWarehouse = create<WarehouseState>((set, get) => ({
     await request('/api/warehouse/craft', {
       method: 'POST',
       body: JSON.stringify({ tier_id: tierId, slot, equip_type: equipType }),
+    })
+    await get().load()
+  },
+
+  craftConsumable: async (recipeId) => {
+    await request('/api/warehouse/craft-consumable', {
+      method: 'POST',
+      body: JSON.stringify({ recipe_id: recipeId }),
     })
     await get().load()
   },

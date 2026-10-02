@@ -17,6 +17,7 @@ from .db import get_db
 from .errors import ApiError
 from .models import (
     SLOT_TO_COLUMN,
+    ConsumableRecipe,
     CraftTier,
     EquipmentItem,
     Item,
@@ -111,13 +112,16 @@ async def warehouse_overview(
     tiers = (
         await db.execute(select(CraftTier).order_by(CraftTier.level_min))
     ).scalars().all()
-
-    tiers = (
-        await db.execute(select(CraftTier).order_by(CraftTier.level_min))
-    ).scalars().all()
     items_by_id = {
         it.id: it for it in (await db.execute(select(Item))).scalars().all()
     }
+    stock_by_item = {
+        tm.item_id: tm.quantity
+        for tm in (
+            await db.execute(select(TeamItem).where(TeamItem.team_id == team.id))
+        ).scalars()
+    }
+    recipes = (await db.execute(select(ConsumableRecipe))).scalars().all()
 
     return {
         "materials": grouped["材料"],
@@ -150,6 +154,28 @@ async def warehouse_overview(
                 ],
             }
             for t in tiers
+        ],
+        "consumable_recipes": [
+            {
+                "id": rc.id,
+                "item_id": rc.item_id,
+                "name": items_by_id[rc.item_id].name,
+                "desc": items_by_id[rc.item_id].desc,
+                "effect": json.loads(items_by_id[rc.item_id].effect or "[]"),
+                "wuxing_cost": rc.wuxing_cost,
+                "cost": [
+                    {
+                        "item_id": c["item_id"],
+                        "name": items_by_id[c["item_id"]].name,
+                        "quantity": c["quantity"],
+                        "stock": stock_by_item.get(c["item_id"], 0),
+                    }
+                    for c in json.loads(rc.cost or "[]")
+                    if c["item_id"] in items_by_id
+                ],
+            }
+            for rc in recipes
+            if rc.item_id in items_by_id
         ],
     }
 
@@ -220,6 +246,82 @@ async def craft_equipment(
         "id": item.id,
         "text": f"制作成功：{item_desc(item)}（已放入仓库）",
         "level": item.equip_level,
+    }
+
+
+class ConsumableCraftIn(BaseModel):
+    recipe_id: int
+
+
+@router.post("/craft-consumable", status_code=201)
+async def craft_consumable(
+    body: ConsumableCraftIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """制作消耗品：按配方扣材料（wuxing_cost>0 时另扣五行石），产出堆叠入
+    团队库存。携带进副本的增益由副本系统读取 effect 消费（暂未接入）。"""
+    team = await get_my_team(db, user.id)
+    if team is None:
+        raise ApiError(404, 40400, "还没有团队")
+    recipe = await db.get(ConsumableRecipe, body.recipe_id)
+    if recipe is None:
+        raise ApiError(422, 42200, "消耗品配方不存在")
+    product = await db.get(Item, recipe.item_id)
+    if product is None:
+        raise ApiError(422, 42200, "配方产物物品不存在")
+    cost = json.loads(recipe.cost or "[]")
+
+    # 校验并扣减（与装备制作同模式：先整体校验，再逐项扣减）
+    deductions: list[tuple[TeamItem | None, int]] = []
+    for entry in cost:
+        tm, item = await get_stock(db, team.id, entry["item_id"])
+        have = tm.quantity if tm else 0
+        if have < entry["quantity"]:
+            raise ApiError(
+                409,
+                40900,
+                f"「{item.name}」数量不足（{have}/{entry['quantity']}）",
+            )
+        deductions.append((tm, entry["quantity"]))
+    if recipe.wuxing_cost > 0:
+        wuxing = (
+            await db.execute(select(Item).where(Item.name == "五行石"))
+        ).scalar_one_or_none()
+        if wuxing is None:
+            raise ApiError(422, 42200, "五行石物品未定义")
+        tm, item = await get_stock(db, team.id, wuxing.id)
+        have = tm.quantity if tm else 0
+        if have < recipe.wuxing_cost:
+            raise ApiError(
+                409,
+                40900,
+                f"「{item.name}」数量不足（{have}/{recipe.wuxing_cost}）",
+            )
+        deductions.append((tm, recipe.wuxing_cost))
+    for tm, qty in deductions:
+        if tm is not None and qty:
+            tm.quantity -= qty
+
+    # 产出堆叠入库存（无库存行则建行，同分解入五行石的 upsert 模式）
+    product_tm = (
+        await db.execute(
+            select(TeamItem).where(
+                TeamItem.team_id == team.id, TeamItem.item_id == product.id
+            )
+        )
+    ).scalar_one_or_none()
+    if product_tm is None:
+        product_tm = TeamItem(team_id=team.id, item_id=product.id, quantity=0)
+        db.add(product_tm)
+        await db.flush()
+    product_tm.quantity += 1
+    await db.commit()
+
+    return {
+        "ok": True,
+        "text": f"制作成功：{product.name}×1（已放入仓库）",
+        "quantity": product_tm.quantity,
     }
 
 

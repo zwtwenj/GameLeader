@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { ApiError } from '../api/client'
 import { useWarehouse } from '../stores/warehouse'
+import type { ConsumableRecipeInfo } from '../stores/warehouse'
 import { useTeam } from '../stores/team'
 
 const SLOTS = [
@@ -194,22 +195,96 @@ export default function CraftModal({ onClose }: { onClose: () => void }) {
         )}
 
         {catTab === 'consumable' && (
-          <p className="rounded-lg bg-neutral-50 px-3 py-6 text-center text-sm text-neutral-400">
-            消耗品配方暂未开放
-          </p>
+          <div className="space-y-3">
+            {(data?.consumable_recipes ?? []).length === 0 ? (
+              <p className="rounded-lg bg-neutral-50 px-3 py-6 text-center text-sm text-neutral-400">
+                暂无消耗品配方
+              </p>
+            ) : (
+              data!.consumable_recipes.map((rc) => (
+                <ConsumableRecipeCard key={rc.id} recipe={rc} onSuccess={onClose} onError={setError} />
+              ))
+            )}
+          </div>
         )}
 
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
-        <div className="mt-5 flex justify-end">
-          <button
-            className="rounded-lg bg-neutral-900 px-5 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
-            onClick={() => void handleCraft()}
-            disabled={loading || tierId === null}
-          >
-            {loading ? '制作中…' : '确认制作'}
-          </button>
+        {catTab === 'equipment' && (
+          <div className="mt-5 flex justify-end">
+            <button
+              className="rounded-lg bg-neutral-900 px-5 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
+              onClick={() => void handleCraft()}
+              disabled={loading || tierId === null}
+            >
+              {loading ? '制作中…' : '确认制作'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 消耗品配方卡：展示产物/效果/消耗（含当前库存 have/need），每卡独立制作。
+ * 库存数据来自服务端随配方返回，制作成功后整单刷新，卡片数字实时更新。 */
+function ConsumableRecipeCard({
+  recipe,
+  onSuccess,
+  onError,
+}: {
+  recipe: ConsumableRecipeInfo
+  onSuccess: () => void
+  onError: (msg: string) => void
+}) {
+  const { craftConsumable } = useWarehouse()
+  const [busy, setBusy] = useState(false)
+  const enough = recipe.cost.every((c) => c.stock >= c.quantity)
+
+  async function handleCraft() {
+    if (busy) return
+    setBusy(true)
+    try {
+      await craftConsumable(recipe.id)
+      onSuccess()
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message : '出了点问题，请重试')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-neutral-200 px-3 py-2.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">
+            {recipe.name}
+            <span className="ml-1.5 text-xs font-normal text-neutral-400">每次制作 ×1</span>
+          </p>
+          <p className="mt-0.5 text-xs text-neutral-500">{recipe.desc}</p>
+          {recipe.effect.map((e) => (
+            <p key={e.type} className="mt-0.5 text-xs text-violet-600">
+              ◆ {e.desc}
+            </p>
+          ))}
+          <p className="mt-1.5 text-xs text-neutral-600">
+            消耗：
+            {recipe.cost.map((c, i) => (
+              <span key={c.item_id} className={c.stock >= c.quantity ? '' : 'text-red-500'}>
+                {i > 0 && '，'}
+                {c.name} {c.stock}/{c.quantity}
+              </span>
+            ))}
+            {recipe.wuxing_cost > 0 && <span>，五行石 {recipe.wuxing_cost}</span>}
+          </p>
         </div>
+        <button
+          className="shrink-0 rounded-lg bg-neutral-900 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+          onClick={() => void handleCraft()}
+          disabled={busy || !enough}
+        >
+          {busy ? '制作中…' : '制作'}
+        </button>
       </div>
     </div>
   )

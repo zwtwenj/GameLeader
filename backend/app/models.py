@@ -346,12 +346,15 @@ class CraftTier(Base):
 
 
 class ConsumableRecipe(Base):
-    """消耗品配方：产出为 item 定义中的消耗品（堆叠入库存）。
-    与装备制作档位（craft_tier）分开——两者的产出形态不同。"""
+    """消耗品配方：产出为 item 定义中的消耗品（每制作一次 +1 堆叠入库存）。
+    与装备制作档位（craft_tier）分开——两者的产出形态不同。
+
+    cost 与 craft_tier 同约定：存储按 item_id 引用
+    [{"item_id": 6, "quantity": 10}, ...]，种子文件以材料名书写、灌库时解析。"""
 
     __tablename__ = "consumable_recipe"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("item.id"), unique=True, nullable=False)
-    cost: Mapped[str] = mapped_column(Text, default="[]", nullable=False)  # [{"name","quantity"}]
+    cost: Mapped[str] = mapped_column(Text, default="[]", nullable=False)  # [{"item_id","quantity"}]
     wuxing_cost: Mapped[int] = mapped_column(default=0, nullable=False)

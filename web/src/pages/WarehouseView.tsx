@@ -40,7 +40,13 @@ export default function WarehouseView() {
     )
   }
 
-  const d = data ?? { materials: [], consumables: [], equipment: [], craft_tiers: [] }
+  const d = data ?? {
+    materials: [],
+    consumables: [],
+    equipment: [],
+    craft_tiers: [],
+    consumable_recipes: [],
+  }
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
