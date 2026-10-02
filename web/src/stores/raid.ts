@@ -85,7 +85,8 @@ type Status = 'loading' | 'idle' | 'offline'
 
 interface RaidState {
   status: Status
-  raid: RaidInfo | null
+  /** 团队全部未关闭的副本实例（支持同时开多个团） */
+  raids: RaidInfo[]
   dungeons: DungeonInfo[]
   load: () => Promise<void>
   fetchDungeons: () => Promise<void>
@@ -100,15 +101,15 @@ interface RaidState {
 
 export const useRaid = create<RaidState>((set, get) => ({
   status: 'loading',
-  raid: null,
+  raids: [],
   dungeons: [],
 
   load: async () => {
-    // 同 team.load：静默刷新，避免挂载面板时的卸载/挂载循环
-    if (get().raid === null && get().status !== 'idle') set({ status: 'loading' })
+    // 静默刷新（不闪加载态）；团队可同时有多个未关闭副本
+    if (get().status === 'loading') set({ status: 'loading' })
     try {
-      const data = await request<{ raid: RaidInfo | null }>('/api/raid/current')
-      set({ raid: data.raid, status: 'idle' })
+      const data = await request<{ raids: RaidInfo[] }>('/api/raid/current')
+      set({ raids: data.raids, status: 'idle' })
     } catch (err) {
       const status = (err as { status?: number }).status
       if (status === -1) set({ status: 'offline' })
@@ -142,7 +143,10 @@ export const useRaid = create<RaidState>((set, get) => ({
     const data = await request<{ raid: RaidInfo }>(`/api/raid/${raidId}/tick`, {
       method: 'POST',
     })
-    set({ raid: data.raid })
+    // 只更新对应实例，其余副本不受影响
+    set((s) => ({
+      raids: s.raids.map((r) => (r.id === data.raid.id ? data.raid : r)),
+    }))
   },
 
   abandonRaid: async (raidId) => {

@@ -21,7 +21,7 @@ const ROLE_BADGE: Record<string, string> = {
 export default function TeamView({ team }: { team: TeamInfo }) {
   const { recruit, acceptRecruit, load } = useTeam()
   const raidStore = useRaid()
-  const raidActive = raidStore.raid?.status === '进行中'
+  const ongoing = raidStore.raids.filter((r) => r.status === '进行中').length
 
   const [candidate, setCandidate] = useState<RecruitOfferInfo | null>(null)
   const [recruiting, setRecruiting] = useState(false)
@@ -79,14 +79,12 @@ export default function TeamView({ team }: { team: TeamInfo }) {
             >
               {recruiting ? '刷新中…' : full ? '成员已满' : '招募'}
             </button>
-            {!raidActive && (
-              <button
-                className="rounded-lg border border-neutral-900 px-4 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-100"
-                onClick={() => setShowRaidModal(true)}
-              >
-                开团
-              </button>
-            )}
+            <button
+              className="rounded-lg border border-neutral-900 px-4 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-100"
+              onClick={() => setShowRaidModal(true)}
+            >
+              开团
+            </button>
           </div>
         </div>
 
@@ -97,7 +95,7 @@ export default function TeamView({ team }: { team: TeamInfo }) {
             label="成员"
             value={`${team.members.length}/${team.member_cap}`}
           />
-          <Stat label="副本状态" value={raidActive ? '进行中' : '空闲'} />
+          <Stat label="进行中副本" value={ongoing > 0 ? `${ongoing} 个` : '无'} />
         </div>
       </div>
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/client'
 import { useRaid } from '../stores/raid'
@@ -23,7 +23,7 @@ function Section({
   count?: number
   bodyClass: string
   bodyRef?: React.RefObject<HTMLDivElement | null>
-  children: ReactNode
+  children: React.ReactNode
 }) {
   return (
     <div className="overflow-hidden rounded-lg border border-neutral-200">
@@ -38,34 +38,96 @@ function Section({
   )
 }
 
-function EmptyHint({ text = '暂无' }: { text?: string }) {
-  return <p className="pt-8 text-center text-xs text-neutral-300">{text}</p>
+/** 副本悬浮窗：固定右侧，可收起（右缘竖排标签）/展开（固定分区侧栏）。
+ * 支持同时多个副本实例：窗内以页签切换，每个进行中的副本各自自动推进。 */
+export default function RaidPanel() {
+  const raids = useRaid((s) => s.raids)
+  const status = useRaid((s) => s.status)
+  const [open, setOpen] = useState(false)
+  const [activeId, setActiveId] = useState<number | null>(null)
+
+  // 多副本页签：默认选中第一个进行中的，否则最新的
+  useEffect(() => {
+    if (raids.length === 0) return
+    if (activeId === null || !raids.some((r) => r.id === activeId)) {
+      const ongoing = raids.find((r) => r.status === '进行中')
+      setActiveId((ongoing ?? raids[0]).id)
+    }
+  }, [raids, activeId])
+
+  const raid = raids.find((r) => r.id === activeId) ?? null
+  const ongoingCount = raids.filter((r) => r.status === '进行中').length
+
+  if (status !== 'idle' || raids.length === 0) return null
+
+  // ---- 收起态：右缘竖排标签 ----
+  if (!open) {
+    return (
+      <button
+        className="fixed right-0 top-1/3 z-40 rounded-l-lg bg-neutral-900/90 px-1.5 py-4 text-xs tracking-widest text-white [writing-mode:vertical-rl] hover:bg-neutral-800"
+        onClick={() => setOpen(true)}
+      >
+        副本×{raids.length}
+      </button>
+    )
+  }
+
+  // ---- 展开态 ----
+  return (
+    <div className="fixed right-4 top-20 z-40 max-h-[85vh] w-[560px] space-y-3 overflow-y-auto rounded-xl bg-white p-4 shadow-lg ring-1 ring-neutral-200">
+      <div className="flex items-center justify-between">
+        <div className="flex flex-wrap gap-1">
+          {raids.map((r) => (
+            <button
+              key={r.id}
+              className={
+                'rounded-lg px-2.5 py-1 text-xs font-medium transition ' +
+                (r.id === activeId
+                  ? 'bg-neutral-900 text-white'
+                  : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200')
+              }
+              onClick={() => setActiveId(r.id)}
+            >
+              {r.dungeon.name}
+              {r.status === '进行中' && ' ·'}
+            </button>
+          ))}
+        </div>
+        <button
+          className="text-xs text-neutral-400 hover:text-neutral-900"
+          onClick={() => setOpen(false)}
+        >
+          收起
+        </button>
+      </div>
+
+      {raid && <RaidDetail raid={raid} />}
+
+      {ongoingCount > 1 && (
+        <p className="text-center text-xs text-neutral-400">
+          {ongoingCount} 个副本同时进行中，每个独立推进
+        </p>
+      )}
+    </div>
+  )
 }
 
-/** 副本悬浮窗：固定右侧，可收起（右缘竖排标签）/展开（固定分区侧栏）。
- * 副本进行中默认展开；团队成员上方不再占用版面。 */
-export default function RaidPanel() {
-  const { raid, tick, abandonRaid, load } = useRaid()
+/** 单个副本的详情分块（进行中自动推进；结束保持展示）。 */
+function RaidDetail({ raid }: { raid: import('../stores/raid').RaidInfo }) {
+  const { tick, abandonRaid, load } = useRaid()
   const [abandoning, setAbandoning] = useState(false)
   const [ticking, setTicking] = useState(false)
   const [error, setError] = useState('')
-  const [open, setOpen] = useState(false)
   const busyRef = useRef(false)
   const logRef = useRef<HTMLDivElement>(null)
   const chatRef = useRef<HTMLDivElement>(null)
 
-  const status = useRaid.getState().status
-  const raidId = raid?.id
-  const raidStatus = raid?.status
-  const logLength = raid?.log.length ?? 0
-  const chatLength = raid?.chat.length ?? 0
+  const raidId = raid.id
+  const raidStatus = raid.status
+  const logLength = raid.log.length
+  const chatLength = raid.chat.length
 
-  // 副本开始时自动展开；结束后保持展开（结算与掉落正需要看），收起只由用户操作
-  useEffect(() => {
-    if (raidStatus === '进行中') setOpen(true)
-  }, [raidStatus])
-
-  // 进行中每 10 秒自动推进一步
+  // 进行中每 10 秒自动推进一步（每个副本实例独立 interval）
   useEffect(() => {
     if (raidStatus !== '进行中' || !raidId) return
     let cancelled = false
@@ -88,20 +150,14 @@ export default function RaidPanel() {
 
   // 记录/聊天追加时自动滚到底部
   useEffect(() => {
-    if (open && logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight
-    }
-  }, [open, logLength])
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [logLength])
   useEffect(() => {
-    if (open && chatRef.current) {
-      chatRef.current.scrollTop = chatRef.current.scrollHeight
-    }
-  }, [open, chatLength])
-
-  if (status !== 'idle' || !raid) return null
+    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
+  }, [chatLength])
 
   async function handleAbandon() {
-    if (abandoning || !raid) return
+    if (abandoning) return
     if (
       !window.confirm(
         raid.status === '进行中' ? '确定解散本次副本？成员将全部解锁' : '确定解散队伍？成员将解锁',
@@ -121,7 +177,7 @@ export default function RaidPanel() {
   }
 
   async function handleTick() {
-    if (busyRef.current || !raid || raid.status !== '进行中') return
+    if (busyRef.current || raid.status !== '进行中') return
     setError('')
     setTicking(true)
     try {
@@ -135,49 +191,8 @@ export default function RaidPanel() {
     }
   }
 
-  // ---- 收起态：右缘竖排标签 ----
-  if (!open) {
-    return (
-      <button
-        className="fixed right-0 top-1/3 z-40 rounded-l-lg bg-neutral-900/90 px-1.5 py-4 text-xs tracking-widest text-white [writing-mode:vertical-rl] hover:bg-neutral-800"
-        onClick={() => setOpen(true)}
-      >
-        副本 {raid.steps.done}/{raid.steps.total}
-      </button>
-    )
-  }
-
-  // ---- 展开态：右侧悬浮侧栏（固定分区） ----
   return (
-    <div className="fixed right-4 top-20 z-40 w-[560px] space-y-3 rounded-xl bg-white p-4 shadow-lg ring-1 ring-neutral-200">
-      {/* 头部：副本名 + 状态 + 收起 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h2 className="font-semibold">{raid.dungeon.name}</h2>
-          <span
-            className={
-              'rounded px-1.5 py-0.5 text-xs ' +
-              (raid.status === '进行中'
-                ? 'bg-blue-100 text-blue-700'
-                : raid.status === '已通关'
-                  ? 'bg-emerald-100 text-emerald-700'
-                  : raid.status === '已失败'
-                    ? 'bg-red-100 text-red-700'
-                    : 'bg-neutral-100 text-neutral-600')
-            }
-          >
-            {raid.status}
-          </span>
-        </div>
-        <button
-          className="text-xs text-neutral-400 hover:text-neutral-900"
-          onClick={() => setOpen(false)}
-        >
-          收起
-        </button>
-      </div>
-
-      {/* 基本信息统计条 */}
+    <>
       <div className="grid grid-cols-3 gap-2 text-center text-sm">
         <div className="rounded-lg bg-neutral-50 py-1.5">
           <p className="text-xs text-neutral-400">步数</p>
@@ -212,7 +227,6 @@ export default function RaidPanel() {
         </p>
       )}
 
-      {/* 当前 BOSS / 推进 */}
       {raid.status === '进行中' && raid.current_boss && (
         <div className="rounded-lg border border-neutral-200">
           <div className="border-b border-neutral-100 bg-neutral-50 px-2.5 py-1.5 text-xs font-medium text-neutral-500">
@@ -240,74 +254,58 @@ export default function RaidPanel() {
         </div>
       )}
 
-      {/* 副本记录 + 团队聊天：固定高度双栏 */}
-      <div className="grid grid-cols-2 gap-3">
-        <Section
-          title="副本记录"
-          count={raid.log.length}
-          bodyClass="h-44"
-          bodyRef={logRef}
-        >
-          {raid.log.length === 0 ? (
-            <EmptyHint />
-          ) : (
-            raid.log.map((entry, i) => (
-              <p key={i} className="text-xs leading-relaxed text-neutral-700">
-                <span className="mr-1.5 font-mono text-neutral-400">{entry.time}</span>
-                {entry.message}
-              </p>
-            ))
-          )}
-        </Section>
-        <Section
-          title="团队聊天"
-          count={raid.chat.length}
-          bodyClass="h-44 bg-sky-50/60"
-          bodyRef={chatRef}
-        >
-          {raid.chat.length === 0 ? (
-            <EmptyHint text="副本进行中，成员们会在这里聊天" />
-          ) : (
-            raid.chat.map((c, i) => (
+      {raid.chat.length > 0 && (
+        <Section title="团队聊天" count={raid.chat.length} bodyClass="h-40 bg-sky-50/60">
+          <div ref={chatRef} className="space-y-1.5">
+            {raid.chat.map((c, i) => (
               <p key={i} className="text-xs leading-relaxed text-neutral-700">
                 <span className="mr-1.5 font-mono text-neutral-400">{c.time}</span>
                 <span className="font-medium text-neutral-900">{c.member}：</span>
                 {c.message}
               </p>
-            ))
-          )}
-        </Section>
-      </div>
-
-      {/* 掉落物品 + 团队成员：固定高度双栏 */}
-      <div className="grid grid-cols-2 gap-3">
-        <Section title="掉落物品" count={raid.drops.length} bodyClass="h-36">
-          {raid.drops.length === 0 ? (
-            <EmptyHint text="击败 BOSS 后掉落" />
-          ) : (
-            <div className="space-y-1">
-              {raid.drops.map((d) => (
-                <p key={d.id} className="text-xs leading-relaxed text-neutral-700">
-                  {d.text}
-                </p>
-              ))}
-            </div>
-          )}
-        </Section>
-        <Section title="团队成员" count={raid.members.length} bodyClass="h-36">
-          <div className="flex flex-wrap gap-1">
-            {raid.members.map((m) => (
-              <span
-                key={m.member_id}
-                className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700"
-              >
-                {m.name}
-                <span className={'ml-1 ' + (ROLE_BADGE[m.role] ?? '')}>{m.role}</span>
-              </span>
             ))}
           </div>
         </Section>
-      </div>
+      )}
+
+      {raid.log.length > 0 && (
+        <Section title="副本记录" count={raid.log.length} bodyClass="h-40">
+          <div ref={logRef} className="space-y-1">
+            {raid.log.map((entry, i) => (
+              <p key={i} className="text-xs leading-relaxed text-neutral-700">
+                <span className="mr-1.5 font-mono text-neutral-400">{entry.time}</span>
+                {entry.message}
+              </p>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {raid.drops.length > 0 && (
+        <Section title="掉落物品" count={raid.drops.length} bodyClass="max-h-32">
+          <div className="space-y-1">
+            {raid.drops.map((d) => (
+              <p key={d.id} className="text-xs leading-relaxed text-neutral-700">
+                {d.text}
+              </p>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      <Section title="进本成员" count={raid.members.length} bodyClass="max-h-28">
+        <div className="flex flex-wrap gap-1">
+          {raid.members.map((m) => (
+            <span
+              key={m.member_id}
+              className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700"
+            >
+              {m.name}
+              <span className={'ml-1 ' + (ROLE_BADGE[m.role] ?? '')}>{m.role}</span>
+            </span>
+          ))}
+        </div>
+      </Section>
 
       <button
         className={
@@ -321,6 +319,6 @@ export default function RaidPanel() {
       >
         {abandoning ? '解散中…' : raid.status === '进行中' ? '解散副本' : '解散队伍'}
       </button>
-    </div>
+    </>
   )
 }

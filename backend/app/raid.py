@@ -636,23 +636,20 @@ async def raid_payload(db: AsyncSession, raid: Raid) -> dict:
 async def current_raid(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
-    """我团队的最近一个副本实例（进行中或最近结束的），无则 {raid: null}。"""
+    """我团队全部未关闭的副本实例（支持同时开多个团），新→旧。"""
     team = (
         await db.execute(select(Team).where(Team.user_id == user.id, Team.deleted_at.is_(None)))
     ).scalar_one_or_none()
     if team is None:
-        return {"raid": None}
-    raid = (
+        return {"raids": []}
+    raids = (
         await db.execute(
             select(Raid)
             .where(Raid.team_id == team.id, Raid.closed.is_(False))
             .order_by(Raid.id.desc())
-            .limit(1)
         )
-    ).scalar_one_or_none()
-    if raid is None:
-        return {"raid": None}
-    return {"raid": await raid_payload(db, raid)}
+    ).scalars().all()
+    return {"raids": [await raid_payload(db, raid) for raid in raids]}
 
 
 @router.post("", status_code=201)
@@ -667,14 +664,6 @@ async def create_raid(
     ).scalar_one_or_none()
     if team is None:
         raise ApiError(404, 40400, "还没有团队")
-
-    ongoing = (
-        await db.execute(
-            select(Raid).where(Raid.team_id == team.id, Raid.status == "进行中")
-        )
-    ).scalar_one_or_none()
-    if ongoing is not None:
-        raise ApiError(409, 40900, "已有进行中的副本，先打完或等它结束")
 
     dungeon = await db.get(Dungeon, body.dungeon_id)
     if dungeon is None or dungeon.deleted_at is not None:
