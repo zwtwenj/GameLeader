@@ -180,6 +180,14 @@ function RaidDetail({ raid }: { raid: import('../stores/raid').RaidInfo }) {
         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>
       )}
 
+      {raid.consumables.items.length > 0 && (
+        <p className="rounded-lg bg-violet-50 px-3 py-1.5 text-xs text-violet-700">
+          携带：
+          {raid.consumables.items.map((i) => `${i.name}×${i.quantity}`).join('、')}
+          {raid.consumables.gear_bonus > 0 && `（全员装等+${raid.consumables.gear_bonus}）`}
+        </p>
+      )}
+
       {raid.status === '已失败' && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
           重试次数耗尽，散团了。队伍不解散，点击下方按钮解锁成员

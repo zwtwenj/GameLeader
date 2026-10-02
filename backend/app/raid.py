@@ -51,6 +51,7 @@ from .models import (
 )
 from .services.jx3api import client as jx3_client
 from .team import get_my_team
+from .warehouse import consume_stock
 
 router = APIRouter(prefix="/api/raid", tags=["raid"])
 
@@ -491,14 +492,72 @@ NODE_HANDLERS = {
 }
 
 
+class ConsumableCarryIn(BaseModel):
+    """开团携带的消耗品条目：同一物品一条、quantity 可叠加，总量≤3。"""
+
+    item_id: int
+    quantity: int = Field(default=1, ge=1, le=3)
+
+
 class RaidCreateIn(BaseModel):
     dungeon_id: int
     member_ids: list[int] = Field(min_length=1, max_length=25)
+    consumables: list[ConsumableCarryIn] = Field(default=[], max_length=3)
 
 
 class RaidPreviewIn(BaseModel):
     dungeon_id: int
     member_ids: list[int] = Field(min_length=1, max_length=25)
+    consumables: list[ConsumableCarryIn] = Field(default=[], max_length=3)
+
+
+MAX_CARRY = 3  # 开团最多携带的消耗品个数（可重复，按个数计）
+
+
+async def resolve_consumables(
+    db: AsyncSession, consumables: list[ConsumableCarryIn]
+) -> dict:
+    """校验并聚合携带的消耗品，返回可存储/复用的结构：
+    {"items": [{"item_id", "name", "quantity"}], "gear_bonus": 预聚合增益}。
+
+    只做定义级校验（存在、类别、总量）；库存扣减由 create_raid 用
+    consume_stock 完成，预览不查库存。"""
+    if not consumables:
+        return {"items": [], "gear_bonus": 0}
+    total = sum(c.quantity for c in consumables)
+    if total > MAX_CARRY:
+        raise ApiError(422, 42200, f"最多携带 {MAX_CARRY} 个消耗品（当前 {total} 个）")
+
+    items_by_id = {
+        it.id: it
+        for it in (
+            await db.execute(
+                select(Item).where(Item.id.in_([c.item_id for c in consumables]))
+            )
+        ).scalars().all()
+    }
+    merged: dict[int, dict] = {}
+    for c in consumables:
+        item = items_by_id.get(c.item_id)
+        if item is None:
+            raise ApiError(422, 42200, f"携带的消耗品不存在（item_id={c.item_id}）")
+        if item.category != "消耗品":
+            raise ApiError(422, 42200, f"「{item.name}」不是消耗品，不能携带")
+        if c.item_id in merged:
+            merged[c.item_id]["quantity"] += c.quantity
+        else:
+            merged[c.item_id] = {
+                "item_id": c.item_id,
+                "name": item.name,
+                "quantity": c.quantity,
+            }
+    gear_bonus = 0
+    for entry in merged.values():
+        item = items_by_id[entry["item_id"]]
+        for effect in json.loads(item.effect or "[]"):
+            if effect.get("type") == "gear_bonus":
+                gear_bonus += effect.get("value", 0) * entry["quantity"]
+    return {"items": list(merged.values()), "gear_bonus": gear_bonus}
 
 
 @router.post("/preview")
@@ -533,7 +592,13 @@ async def preview_raid(
     if len(rows) != len(member_ids):
         raise ApiError(422, 42200, "有成员不存在或不属于你的团队")
     roles = [x.role for _, x in rows]
-    avg_gear = round(sum(m.equip_level for m, _ in rows) / len(rows), 1) if rows else 0
+    carried = await resolve_consumables(db, body.consumables)
+    # 携带的消耗品按 effect 折算到平均装等上（如 gear_bonus 全员+N）
+    avg_gear = (
+        round(sum(m.equip_level for m, _ in rows) / len(rows) + carried["gear_bonus"], 1)
+        if rows
+        else 0
+    )
 
     # 预览的 BOSS 列表 = 时间线中出现的 BOSS（按首次出现顺序）；无时间线则退回副本 BOSS 表
     timeline = json.loads(dungeon.timeline or "[]")
@@ -585,6 +650,7 @@ async def preview_raid(
         "requirement": {"坦克": rule["tank"], "治疗": rule["heal"], "输出": rule["dps"]},
         "composition": have,
         "avg_gear": avg_gear,
+        "gear_bonus": carried["gear_bonus"],
         "bosses": bosses,
     }
 
@@ -647,6 +713,7 @@ async def raid_payload(db: AsyncSession, raid: Raid) -> dict:
         "steps": {"done": raid.node_index, "total": len(timeline)},
         "retries_left": raid.retries_left,
         "current_boss": current_boss,
+        "consumables": json.loads(raid.consumables or "{}") or {"items": [], "gear_bonus": 0},
         "log": json.loads(raid.log or "[]"),
         "chat": json.loads(raid.chat or "[]"),
         "members": [
@@ -746,6 +813,12 @@ async def create_raid(
         db.add(raid)
         await db.flush()
 
+        # 携带的消耗品：校验 + 从团队库存扣减 + 存档（进本即消耗，不解散不退还）
+        carried = await resolve_consumables(db, body.consumables)
+        for entry in carried["items"]:
+            await consume_stock(db, team.id, entry["item_id"], entry["quantity"])
+        raid.consumables = json.dumps(carried, ensure_ascii=False)
+
         for m in members:
             db.add(
                 RaidMember(
@@ -812,7 +885,13 @@ async def _do_tick(db: AsyncSession, raid_id: int, team_id: int) -> dict | None:
         ).all()
         snapshots = [rm for rm, _ in rows]
         roles = [x.role for _, x in rows]
-        avg_gear = round(sum(rm.equip_level for rm in snapshots) / len(snapshots), 1) if snapshots else 0
+        # 快照为基础装等；携带的消耗品增益在此叠加进战斗判定用的平均装等
+        gear_bonus = json.loads(raid.consumables or "{}").get("gear_bonus", 0)
+        avg_gear = (
+            round(sum(rm.equip_level for rm in snapshots) / len(snapshots) + gear_bonus, 1)
+            if snapshots
+            else 0
+        )
 
         team_members = (
             await db.execute(

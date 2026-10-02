@@ -227,6 +227,10 @@ class Raid(Base):
     # 材料掉落明细（JSON）：[{"boss": "王海银", "name": "天外陨铁", "qty": 1}]——
     # 材料不在 equipment_item 表，面板掉落列表由本字段合并输出
     material_drops: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)
+    # 携带的消耗品（JSON，开团时已从团队库存扣除）：
+    # {"items": [{"item_id": 2, "name": "贵妃宴", "quantity": 2}], "gear_bonus": 2}
+    # gear_bonus 为解析 effect 后的预聚合增益，tick 战斗判定直接取用
+    consumables: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # 玩家已点解散（结算查看完毕）：置位后 /current 不再返回，面板从页面消失

@@ -63,6 +63,29 @@ async def get_stock(
     return tm, item
 
 
+async def consume_stock(
+    db: AsyncSession, team_id: int, item_id: int, quantity: int
+) -> int:
+    """从团队库存销毁/扣减物品×N（行锁），返回扣减后的剩余数量。
+
+    库存不足抛 409。制作扣料与副本携带消耗共用本函数——调用方负责
+    把它放进自己的事务（异常时统一回滚）。"""
+    tm = (
+        await db.execute(
+            select(TeamItem)
+            .where(TeamItem.team_id == team_id, TeamItem.item_id == item_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    have = tm.quantity if tm else 0
+    if have < quantity:
+        item = await db.get(Item, item_id)
+        name = item.name if item else str(item_id)
+        raise ApiError(409, 40900, f"「{name}」数量不足（{have}/{quantity}）")
+    tm.quantity -= quantity
+    return tm.quantity
+
+
 def item_desc(item: EquipmentItem) -> str:
     if item.slot == "武器":
         return f"{item.equip_level}{item.equip_type}武器"
@@ -181,6 +204,39 @@ async def warehouse_overview(
     }
 
 
+@router.get("/items")
+async def warehouse_items(
+    category: str = "消耗品",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按类别查物品定义与团队库存数量（含 0 库存，供挑选/配置类界面）。"""
+    team = await get_my_team(db, user.id)
+    if team is None:
+        raise ApiError(404, 40400, "还没有团队")
+    rows = (
+        await db.execute(
+            select(Item, TeamItem.quantity)
+            .outerjoin(
+                TeamItem,
+                (TeamItem.item_id == Item.id) & (TeamItem.team_id == team.id),
+            )
+            .where(Item.category == category)
+            .order_by(Item.id)
+        )
+    ).all()
+    return [
+        {
+            "item_id": item.id,
+            "name": item.name,
+            "desc": item.desc,
+            "effect": json.loads(item.effect or "[]"),
+            "stock": qty or 0,
+        }
+        for item, qty in rows
+    ]
+
+
 class CraftIn(BaseModel):
     tier_id: int
     slot: str = Field(max_length=8)
@@ -214,20 +270,8 @@ async def craft_equipment(
     cost = json.loads(tier.cost or "[]")
 
     # 校验并扣减材料（含五行石——已归类为材料，走统一库存；消耗按 item_id 引用）
-    stocks: dict[int, tuple[TeamItem | None, Item]] = {}
     for entry in cost:
-        tm, item = await get_stock(db, team.id, entry["item_id"])
-        have = tm.quantity if tm else 0
-        if have < entry["quantity"]:
-            raise ApiError(
-                409,
-                40900,
-                f"「{item.name}」数量不足（{have}/{entry['quantity']}）",
-            )
-        stocks[entry["item_id"]] = (tm, item)
-    for entry in cost:
-        tm, _ = stocks[entry["item_id"]]
-        tm.quantity -= entry["quantity"]
+        await consume_stock(db, team.id, entry["item_id"], entry["quantity"])
 
     item = EquipmentItem(
         team_id=team.id,
@@ -273,36 +317,16 @@ async def craft_consumable(
         raise ApiError(422, 42200, "配方产物物品不存在")
     cost = json.loads(recipe.cost or "[]")
 
-    # 校验并扣减（与装备制作同模式：先整体校验，再逐项扣减）
-    deductions: list[tuple[TeamItem | None, int]] = []
+    # 校验并扣减（公共 consume_stock：行锁 + 不足报 409）
     for entry in cost:
-        tm, item = await get_stock(db, team.id, entry["item_id"])
-        have = tm.quantity if tm else 0
-        if have < entry["quantity"]:
-            raise ApiError(
-                409,
-                40900,
-                f"「{item.name}」数量不足（{have}/{entry['quantity']}）",
-            )
-        deductions.append((tm, entry["quantity"]))
+        await consume_stock(db, team.id, entry["item_id"], entry["quantity"])
     if recipe.wuxing_cost > 0:
         wuxing = (
             await db.execute(select(Item).where(Item.name == "五行石"))
         ).scalar_one_or_none()
         if wuxing is None:
             raise ApiError(422, 42200, "五行石物品未定义")
-        tm, item = await get_stock(db, team.id, wuxing.id)
-        have = tm.quantity if tm else 0
-        if have < recipe.wuxing_cost:
-            raise ApiError(
-                409,
-                40900,
-                f"「{item.name}」数量不足（{have}/{recipe.wuxing_cost}）",
-            )
-        deductions.append((tm, recipe.wuxing_cost))
-    for tm, qty in deductions:
-        if tm is not None and qty:
-            tm.quantity -= qty
+        await consume_stock(db, team.id, wuxing.id, recipe.wuxing_cost)
 
     # 产出堆叠入库存（无库存行则建行，同分解入五行石的 upsert 模式）
     product_tm = (

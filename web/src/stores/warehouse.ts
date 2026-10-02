@@ -53,6 +53,15 @@ export interface ConsumableRecipeInfo {
   cost: ConsumableCostInfo[]
 }
 
+export interface ConsumableStockInfo {
+  item_id: number
+  name: string
+  desc: string
+  effect: { type: string; value: number; desc: string }[]
+  /** 团队当前库存（含 0） */
+  stock: number
+}
+
 export interface WarehouseInfo {
   materials: WarehouseItemInfo[]
   consumables: WarehouseItemInfo[]
@@ -69,8 +78,11 @@ let loadPromise: Promise<void> | null = null
 interface WarehouseState {
   status: Status
   data: WarehouseInfo | null
+  /** 按类别查物品定义与库存（含 0 库存），供挑选/配置类界面 */
+  consumableStock: ConsumableStockInfo[] | null
   /** 每次进入仓库页签时调用：拉取最新库存（已有数据时静默刷新） */
   load: () => Promise<void>
+  fetchStock: (category: string) => Promise<void>
   /** 制作装备：扣材料/五行石，产出装备实例进仓库 */
   craftEquipment: (tierId: number, slot: string, equipType: string) => Promise<void>
   /** 制作消耗品：按配方扣材料，产出堆叠入仓库 */
@@ -86,6 +98,14 @@ interface WarehouseState {
 export const useWarehouse = create<WarehouseState>((set, get) => ({
   status: 'loading',
   data: null,
+  consumableStock: null,
+
+  fetchStock: async (category) => {
+    const list = await request<ConsumableStockInfo[]>(
+      `/api/warehouse/items?category=${encodeURIComponent(category)}`,
+    )
+    set({ consumableStock: list })
+  },
 
   load: async () => {
     // 已有数据时静默刷新（不闪加载态），但每次进入都要拉最新——

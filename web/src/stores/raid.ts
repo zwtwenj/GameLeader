@@ -65,7 +65,14 @@ export interface RaidPreviewInfo {
   requirement: { 坦克: number; 治疗: number; 输出: number }
   composition: { 坦克: number; 治疗: number; 输出: number }
   avg_gear: number
+  /** 携带消耗品折算的装等增益（已含在 avg_gear 内） */
+  gear_bonus: number
   bosses: BossOddsInfo[]
+}
+
+export interface ConsumableCarry {
+  item_id: number
+  quantity: number
 }
 
 export interface RaidInfo {
@@ -78,6 +85,8 @@ export interface RaidInfo {
   steps: { done: number; total: number }
   retries_left: number
   current_boss: RaidBossInfo | null
+  /** 开团携带的消耗品（进本即从仓库扣除） */
+  consumables: { items: { item_id: number; name: string; quantity: number }[]; gear_bonus: number }
   log: RaidLogEntry[]
   chat: RaidChatEntry[]
   members: RaidMemberInfo[]
@@ -96,9 +105,9 @@ interface RaidState {
   startPolling: () => void
   stopPolling: () => void
   fetchDungeons: () => Promise<void>
-  createRaid: (dungeonId: number, memberIds: number[]) => Promise<void>
+  createRaid: (dungeonId: number, memberIds: number[], consumables: ConsumableCarry[]) => Promise<void>
   /** 开团预览：当前配置对各个 BOSS 的胜率（纯计算） */
-  preview: (dungeonId: number, memberIds: number[]) => Promise<RaidPreviewInfo>
+  preview: (dungeonId: number, memberIds: number[], consumables: ConsumableCarry[]) => Promise<RaidPreviewInfo>
   /** 推进一个时间线节点（返回 true 进下一个 / false 原地重试） */
   tick: (raidId: number) => Promise<void>
   /** 解散队伍：进行中→已解散；已结束→仅解锁成员（记录与掉落保留） */
@@ -158,20 +167,20 @@ export const useRaid = create<RaidState>((set, get) => ({
     set({ dungeons })
   },
 
-  createRaid: async (dungeonId, memberIds) => {
+  createRaid: async (dungeonId, memberIds, consumables) => {
     await request('/api/raid', {
       method: 'POST',
-      body: JSON.stringify({ dungeon_id: dungeonId, member_ids: memberIds }),
+      body: JSON.stringify({ dungeon_id: dungeonId, member_ids: memberIds, consumables }),
     })
     await get().load()
     // 进本会锁定成员，团队页面的锁定徽章需要同步刷新
     await useTeam.getState().load()
   },
 
-  preview: (dungeonId, memberIds) =>
+  preview: (dungeonId, memberIds, consumables) =>
     request<RaidPreviewInfo>('/api/raid/preview', {
       method: 'POST',
-      body: JSON.stringify({ dungeon_id: dungeonId, member_ids: memberIds }),
+      body: JSON.stringify({ dungeon_id: dungeonId, member_ids: memberIds, consumables }),
     }),
 
   tick: async (raidId) => {
