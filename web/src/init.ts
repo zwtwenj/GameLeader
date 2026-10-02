@@ -24,4 +24,11 @@ export async function loadUserData(): Promise<void> {
     useRaid.getState().fetchDungeons(),
     useWarehouse.getState().load(),
   ])
+  // 首屏数据就绪后开始副本进度轮询（幂等；登出/失效时由 App 停表）
+  useRaid.getState().startPolling()
+}
+
+/** 登出 / 会话失效时停掉副本进度轮询（App 按认证状态调用） */
+export function stopRaidPolling(): void {
+  useRaid.getState().stopPolling()
 }

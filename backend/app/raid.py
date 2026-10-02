@@ -13,6 +13,7 @@
 骚话（jx3api /saohua/random），写入实例 chat 字段；副本结束/解散即停。"""
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -638,7 +639,7 @@ async def raid_payload(db: AsyncSession, raid: Raid) -> dict:
                     "drop_high": boss.drop_high,
                 }
 
-    return {
+    payload = {
         "id": raid.id,
         "status": raid.status,
         "dungeon": {"id": dungeon.id, "name": f"{dungeon.size}人{dungeon.name}", "size": dungeon.size},
@@ -675,6 +676,11 @@ async def raid_payload(db: AsyncSession, raid: Raid) -> dict:
             for i, md in enumerate(material_drops)
         ],
     }
+    # revision = 内容摘要（不含自身）：轮询方据此跳过无变化数据；未来可升级为 ETag/304
+    payload["revision"] = hashlib.md5(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:12]
+    return payload
 
 
 @router.get("/current")

@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 
-import { initApp, loadUserData } from './init'
+import { initApp, loadUserData, stopRaidPolling } from './init'
 import Home from './pages/Home'
 import Login from './pages/Login'
 import { useAuth } from './stores/auth'
@@ -14,9 +14,10 @@ export default function App() {
     void initApp()
   }, [])
 
-  // 登录态就绪（登录成功 / 刷新恢复）后加载业务数据与静态配置
+  // 登录态就绪（登录成功 / 刷新恢复）后加载业务数据与静态配置；离开登录态则停轮询
   useEffect(() => {
     if (status === 'authed') void loadUserData()
+    else stopRaidPolling()
   }, [status])
 
   if (status === 'loading') {

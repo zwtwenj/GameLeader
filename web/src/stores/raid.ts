@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
-import { request } from '../api/client'
+import { ApiError, request } from '../api/client'
+import { useAuth } from './auth'
 import { useTeam } from './team'
 
 export interface RaidBossInfo {
@@ -69,6 +70,8 @@ export interface RaidPreviewInfo {
 
 export interface RaidInfo {
   id: number
+  /** 内容摘要（服务端对整份快照哈希）：轮询时据此跳过无变化数据 */
+  revision: string
   status: string
   dungeon: { id: number; name: string; size: number }
   progress: { killed: number; total: number }
@@ -89,6 +92,9 @@ interface RaidState {
   raids: RaidInfo[]
   dungeons: DungeonInfo[]
   load: () => Promise<void>
+  /** 启动进度轮询（登录态就绪后调用一次，幂等） */
+  startPolling: () => void
+  stopPolling: () => void
   fetchDungeons: () => Promise<void>
   createRaid: (dungeonId: number, memberIds: number[]) => Promise<void>
   /** 开团预览：当前配置对各个 BOSS 的胜率（纯计算） */
@@ -104,16 +110,45 @@ export const useRaid = create<RaidState>((set, get) => ({
   raids: [],
   dungeons: [],
 
-  load: async () => {
-    // 静默刷新（不闪加载态）；团队可同时有多个未关闭副本
-    if (get().status === 'loading') set({ status: 'loading' })
-    try {
-      const data = await request<{ raids: RaidInfo[] }>('/api/raid/current')
-      set({ raids: data.raids, status: 'idle' })
-    } catch (err) {
-      const status = (err as { status?: number }).status
-      if (status === -1) set({ status: 'offline' })
-      else throw err
+  load: () => {
+    // 静默刷新（不闪加载态）；团队可同时有多个未关闭副本。
+    // 单飞锁：轮询与开团/解散后的刷新并发时共享同一次请求
+    if (inflight) return inflight
+    const task = (async () => {
+      try {
+        const data = await request<{ raids: RaidInfo[] }>('/api/raid/current')
+        const next = data.raids
+        const cur = get().raids
+        // 全部 revision 与 id 一致 → 内容零变化，跳过 set 避免整块面板无谓重渲染
+        const unchanged =
+          cur.length === next.length &&
+          cur.every((r, i) => r.id === next[i].id && r.revision === next[i].revision)
+        if (!unchanged || get().status !== 'idle') {
+          set({ raids: next, status: 'idle' })
+        }
+      } catch (err) {
+        const status = (err as { status?: number }).status
+        if (status === -1) set({ status: 'offline' })
+        else throw err
+      } finally {
+        inflight = null
+      }
+    })()
+    inflight = task
+    return task
+  },
+
+  startPolling: () => {
+    if (polling) return
+    polling = true
+    pollTimer = setTimeout(() => void pollTick(), POLL_FAST)
+  },
+
+  stopPolling: () => {
+    polling = false
+    if (pollTimer) {
+      clearTimeout(pollTimer)
+      pollTimer = null
     }
   },
 
@@ -156,3 +191,31 @@ export const useRaid = create<RaidState>((set, get) => ({
     await useTeam.getState().load()
   },
 }))
+
+// ---- 进度轮询：推进由后端任务驱动，前端定时拉取全量快照 ----
+// 有进行中的副本走快节拍追进度，空闲走慢节拍保活
+const POLL_FAST = 10_000
+const POLL_SLOW = 30_000
+
+let inflight: Promise<void> | null = null
+let polling = false
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+
+async function pollTick(): Promise<void> {
+  if (!polling) return
+  pollTimer = null
+  try {
+    await useRaid.getState().load()
+  } catch (err) {
+    // 后台轮询撞上登录失效（refresh 也过期）→ 直接登出；其余失败下一轮再试
+    if (err instanceof ApiError && err.code === 40102) {
+      useAuth.getState().logout()
+      return
+    }
+  }
+  if (!polling) return
+  const interval = useRaid.getState().raids.some((r) => r.status === '进行中')
+    ? POLL_FAST
+    : POLL_SLOW
+  pollTimer = setTimeout(() => void pollTick(), interval)
+}
