@@ -1,6 +1,8 @@
 # 密钥与本地环境
 .env
+.env.production
 backend/.env
+backend/.env.production
 
 # Python
 venv/
