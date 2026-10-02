@@ -1,10 +1,41 @@
 services:
+  mysql:
+    image: docker.io/mysql:8.0
+    container_name: gameleader-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - gameleader_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+        reservations:
+          memory: 256m
+
   backend:
     build: ./backend
     container_name: gameleader-backend
     restart: unless-stopped
     env_file:
       - ./backend/.env.production
+    depends_on:
+      mysql:
+        condition: service_healthy
     ports:
       # 只绑本机回环，外网一律走前端 nginx 的 /api 代理
       - "127.0.0.1:8100:8100"
@@ -16,5 +47,9 @@ services:
     depends_on:
       - backend
     ports:
-      # 对外入口：80 被占用时改成 8080:80 等
-      - "80:80"
+      # 80 被宿主机 nginx（langfuse）占用，改绑本机 8080，由宿主机 nginx 反代
+      - "127.0.0.1:8080:80"
+
+volumes:
+  gameleader_mysql_data:
+    driver: local

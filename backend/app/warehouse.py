@@ -23,6 +23,7 @@ from .models import (
     Member,
     Sect,
     TeamItem,
+    User,
     Xinfa,
 )
 from .team import get_my_team

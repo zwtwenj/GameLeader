@@ -9,7 +9,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .data_dungeon import BOSSES, DUNGEON, BOSS_LOOTS, timeline_json, loot_json
+from .data_dungeon import BOSSES, DUNGEON, DUNGEON_LOOT, BOSS_LOOTS, timeline_json, loot_json
 from .data_warehouse import CRAFT_TIERS, EVENT_TEXTS, ITEMS
 from .data_xinfa import SEED
 from .models import (
