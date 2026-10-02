@@ -5,7 +5,13 @@ K（平衡系数）副本.md 里没有，按 plan.md 示例暂取 120→后改�
 
 import json
 
-DUNGEON = {"name": "战宝迦兰", "size": 10, "balance_k": 110}
+DUNGEON = {
+    "name": "战宝迦兰",
+    "size": 10,
+    "balance_k": 110,
+    "drop_equip_count": 3,  # 3+1 掉落的"3"
+    "drop_weapon_chance": 0.5,  # 3+1 掉落的"1"
+}
 
 # 副本通用材料掉落池：副本内每个 BOSS 击败后都会 roll 一遍
 DUNGEON_LOOT = [{"name": "天外陨铁", "min": 1, "max": 1, "chance": 1.0}]

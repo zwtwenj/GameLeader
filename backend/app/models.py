@@ -155,6 +155,9 @@ class Dungeon(Base):
     balance_k: Mapped[int] = mapped_column(nullable=False)  # 平衡系数 K，与副本绑定
     timeline: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)
     loot: Mapped[str | None] = mapped_column(Text, default="[]", nullable=True)
+    # 副本级掉落参数：每次击杀 BOSS 必掉的部位装备数 + 武器掉率（与 3+1/1+0.3 的副本差异）
+    drop_equip_count: Mapped[int] = mapped_column(default=3, nullable=False)
+    drop_weapon_chance: Mapped[float] = mapped_column(default=0.5, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

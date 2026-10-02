@@ -55,7 +55,6 @@ router = APIRouter(prefix="/api/raid", tags=["raid"])
 log = logging.getLogger(__name__)
 
 MAX_RETRIES = 5  # 共享战斗重试次数（全副本所有 BOSS 共享）
-WEAPON_DROP_CHANCE = 0.5  # 击败 BOSS 后额外掉落武器的概率（3+1 掉落的"1"）
 CHAT_INTERVAL_RANGE = (10, 20)  # 团队聊天间隔（秒，开发阶段）
 
 # 事件文案：DB 表 raid_event_text 覆盖默认值，进程内缓存 + TTL 懒刷新
@@ -411,8 +410,9 @@ async def handle_fight_end(ctx: NodeContext, params: dict) -> NodeOutcome:
     # 3+1 保底装备掉落 + 数据化材料掉落（副本通用池 + BOSS 专属表合并 roll）
     entries: list[str] = []
     drops: list[str] = []
-    drop_plan = [False, False, False]
-    if random.random() < WEAPON_DROP_CHANCE:
+    # 掉落数与武器掉率按副本配置（副本表字段：战宝 3/0.5、5人本 1/0.3 等）
+    drop_plan = [False] * ctx.dungeon.drop_equip_count
+    if random.random() < ctx.dungeon.drop_weapon_chance:
         drop_plan.append(True)
     for weapon in drop_plan:
         item = await create_drop_item(ctx, boss, weapon)
