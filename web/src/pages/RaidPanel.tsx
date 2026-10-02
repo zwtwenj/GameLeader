@@ -9,27 +9,25 @@ const ROLE_BADGE: Record<string, string> = {
   输出: 'bg-red-100 text-red-700',
 }
 
-/** 带标题栏的固定高度分区：内容在区域内滚动，区域高度不随内容变化。 */
+/** 带标题栏的功能分区：作为田字格单元格使用，标题栏固定、内容在区域内滚动。 */
 function Section({
   title,
   count,
-  bodyClass,
   bodyRef,
   children,
 }: {
   title: string
   count?: number
-  bodyClass: string
   bodyRef?: React.RefObject<HTMLDivElement | null>
   children: React.ReactNode
 }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-neutral-200">
-      <div className="flex items-center justify-between border-b border-neutral-100 bg-neutral-50 px-2.5 py-1.5">
-        <span className="text-xs font-medium text-neutral-500">{title}</span>
+    <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+      <div className="flex shrink-0 items-center justify-between border-b border-neutral-100 bg-neutral-50 px-2.5 py-1.5">
+        <span className="text-xs font-semibold text-neutral-600">{title}</span>
         {count !== undefined && <span className="text-xs text-neutral-400">{count}</span>}
       </div>
-      <div ref={bodyRef} className={`overflow-y-auto px-2.5 py-2 ${bodyClass}`}>
+      <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
         {children}
       </div>
     </div>
@@ -55,6 +53,16 @@ export default function RaidPanel() {
 
   const raid = raids.find((r) => r.id === activeId) ?? null
 
+  // 进行中自动展开 / 全部结束自动收起；仅在状态过渡时动作，手动开关不受打扰
+  const ongoing = raids.some((r) => r.status === '进行中')
+  const prevOngoing = useRef(false)
+  useEffect(() => {
+    if (ongoing !== prevOngoing.current) {
+      setOpen(ongoing)
+      prevOngoing.current = ongoing
+    }
+  }, [ongoing])
+
   if (status !== 'idle' || raids.length === 0) return null
 
   // ---- 收起态：右缘竖排标签 ----
@@ -69,9 +77,9 @@ export default function RaidPanel() {
     )
   }
 
-  // ---- 展开态 ----
+  // ---- 展开态：整体定高不滚动——页签/统计/横幅固定，田字格四分区各自内部滚动，解散按钮沉底 ----
   return (
-    <div className="fixed right-4 top-20 z-40 max-h-[85vh] w-[560px] space-y-3 overflow-y-auto rounded-xl bg-white p-4 shadow-lg ring-1 ring-neutral-200">
+    <div className="fixed bottom-4 right-4 top-20 z-40 flex w-[560px] flex-col gap-3 rounded-xl bg-neutral-100 p-4 shadow-lg ring-1 ring-neutral-200">
       <div className="flex items-center justify-between">
         <div className="flex flex-wrap gap-1">
           {raids.map((r) => (
@@ -81,7 +89,7 @@ export default function RaidPanel() {
                 'rounded-lg px-2.5 py-1 text-xs font-medium transition ' +
                 (r.id === activeId
                   ? 'bg-neutral-900 text-white'
-                  : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200')
+                  : 'bg-white text-neutral-600 ring-1 ring-neutral-200 hover:bg-neutral-50')
               }
               onClick={() => setActiveId(r.id)}
             >
@@ -101,6 +109,11 @@ export default function RaidPanel() {
       {raid && <RaidDetail raid={raid} />}
     </div>
   )
+}
+
+/** 空分区的占位提示：固定分区布局下，四块区域无论有无内容都保持可见。 */
+function EmptyHint({ text }: { text: string }) {
+  return <p className="flex h-full items-center justify-center text-xs text-neutral-300">{text}</p>
 }
 
 /** 单个副本的详情分块：展示 + 解散。推进由后端任务驱动，本组件纯展示。 */
@@ -143,21 +156,21 @@ function RaidDetail({ raid }: { raid: import('../stores/raid').RaidInfo }) {
   }
 
   return (
-    <>
-      <div className="grid grid-cols-3 gap-2 text-center text-sm">
-        <div className="rounded-lg bg-neutral-50 py-1.5">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="grid shrink-0 grid-cols-3 gap-2 text-center text-sm">
+        <div className="rounded-lg border border-neutral-200 bg-white py-1.5">
           <p className="text-xs text-neutral-400">步数</p>
           <p className="font-medium">
             {raid.steps.done}/{raid.steps.total}
           </p>
         </div>
-        <div className="rounded-lg bg-neutral-50 py-1.5">
+        <div className="rounded-lg border border-neutral-200 bg-white py-1.5">
           <p className="text-xs text-neutral-400">进度</p>
           <p className="font-medium">
             {raid.progress.killed}/{raid.progress.total}
           </p>
         </div>
-        <div className="rounded-lg bg-neutral-50 py-1.5">
+        <div className="rounded-lg border border-neutral-200 bg-white py-1.5">
           <p className="text-xs text-neutral-400">剩余重试</p>
           <p className="font-medium text-amber-600">{raid.retries_left}</p>
         </div>
@@ -179,8 +192,8 @@ function RaidDetail({ raid }: { raid: import('../stores/raid').RaidInfo }) {
       )}
 
       {raid.status === '进行中' && raid.current_boss && (
-        <div className="rounded-lg border border-neutral-200">
-          <div className="border-b border-neutral-100 bg-neutral-50 px-2.5 py-1.5 text-xs font-medium text-neutral-500">
+        <div className="rounded-lg border border-neutral-200 bg-white shadow-sm">
+          <div className="border-b border-neutral-100 bg-neutral-50 px-2.5 py-1.5 text-xs font-semibold text-neutral-600">
             当前 BOSS（推进由后端任务驱动）
           </div>
           <div className="flex items-center justify-between px-2.5 py-2">
@@ -196,62 +209,71 @@ function RaidDetail({ raid }: { raid: import('../stores/raid').RaidInfo }) {
         </div>
       )}
 
-      {raid.chat.length > 0 && (
-        <Section title="团队聊天" count={raid.chat.length} bodyClass="h-40 bg-sky-50/60">
-          <div ref={chatRef} className="space-y-1.5">
-            {raid.chat.map((c, i) => (
-              <p key={i} className="text-xs leading-relaxed text-neutral-700">
-                <span className="mr-1.5 font-mono text-neutral-400">{c.time}</span>
-                <span className="font-medium text-neutral-900">{c.member}：</span>
-                {c.message}
-              </p>
+      {/* 田字格：记录 / 聊天 / 掉落 / 成员，四块均分剩余高度、各自内部滚动 */}
+      <div className="grid min-h-0 flex-1 grid-cols-2 grid-rows-2 gap-3">
+        <Section title="副本记录" count={raid.log.length}>
+          {raid.log.length > 0 ? (
+            <div ref={logRef} className="space-y-1">
+              {raid.log.map((entry, i) => (
+                <p key={i} className="text-xs leading-relaxed text-neutral-700">
+                  <span className="mr-1.5 font-mono text-neutral-400">{entry.time}</span>
+                  {entry.message}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <EmptyHint text="开团后每 10 秒推进一步，记录实时更新" />
+          )}
+        </Section>
+
+        <Section title="团队聊天" count={raid.chat.length}>
+          {raid.chat.length > 0 ? (
+            <div ref={chatRef} className="space-y-1.5">
+              {raid.chat.map((c, i) => (
+                <p key={i} className="text-xs leading-relaxed text-neutral-700">
+                  <span className="mr-1.5 font-mono text-neutral-400">{c.time}</span>
+                  <span className="font-medium text-neutral-900">{c.member}：</span>
+                  {c.message}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <EmptyHint text="副本进行中，成员会不时冒泡" />
+          )}
+        </Section>
+
+        <Section title="掉落物品" count={raid.drops.length}>
+          {raid.drops.length > 0 ? (
+            <div className="space-y-1">
+              {raid.drops.map((d) => (
+                <p key={d.id} className="text-xs leading-relaxed text-neutral-700">
+                  {d.text}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <EmptyHint text="击杀 BOSS 后掉落展示在这里" />
+          )}
+        </Section>
+
+        <Section title="队伍成员" count={raid.members.length}>
+          <div className="flex flex-wrap gap-1">
+            {raid.members.map((m) => (
+              <span
+                key={m.member_id}
+                className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700"
+              >
+                {m.name}
+                <span className={'ml-1 ' + (ROLE_BADGE[m.role] ?? '')}>{m.role}</span>
+              </span>
             ))}
           </div>
         </Section>
-      )}
-
-      {raid.log.length > 0 && (
-        <Section title="副本记录" count={raid.log.length} bodyClass="h-40">
-          <div ref={logRef} className="space-y-1">
-            {raid.log.map((entry, i) => (
-              <p key={i} className="text-xs leading-relaxed text-neutral-700">
-                <span className="mr-1.5 font-mono text-neutral-400">{entry.time}</span>
-                {entry.message}
-              </p>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {raid.drops.length > 0 && (
-        <Section title="掉落物品" count={raid.drops.length} bodyClass="max-h-32">
-          <div className="space-y-1">
-            {raid.drops.map((d) => (
-              <p key={d.id} className="text-xs leading-relaxed text-neutral-700">
-                {d.text}
-              </p>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      <Section title="进本成员" count={raid.members.length} bodyClass="max-h-28">
-        <div className="flex flex-wrap gap-1">
-          {raid.members.map((m) => (
-            <span
-              key={m.member_id}
-              className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700"
-            >
-              {m.name}
-              <span className={'ml-1 ' + (ROLE_BADGE[m.role] ?? '')}>{m.role}</span>
-            </span>
-          ))}
-        </div>
-      </Section>
+      </div>
 
       <button
         className={
-          'w-full rounded-lg py-1.5 text-sm disabled:opacity-50 ' +
+          'w-full shrink-0 rounded-lg py-1.5 text-sm disabled:opacity-50 ' +
           (raid.status === '进行中'
             ? 'border border-red-200 text-red-600 hover:bg-red-50'
             : 'bg-neutral-900 text-white hover:bg-neutral-800')
@@ -261,6 +283,6 @@ function RaidDetail({ raid }: { raid: import('../stores/raid').RaidInfo }) {
       >
         {abandoning ? '解散中…' : raid.status === '进行中' ? '解散副本' : '解散队伍'}
       </button>
-    </>
+    </div>
   )
 }
