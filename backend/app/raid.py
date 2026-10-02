@@ -49,6 +49,7 @@ from .models import (
     Xinfa,
 )
 from .services.jx3api import client as jx3_client
+from .team import get_my_team
 
 router = APIRouter(prefix="/api/raid", tags=["raid"])
 
@@ -71,6 +72,50 @@ EVENT_DEFAULTS = {
 EVENT_TEXT_TTL = 60.0  # 秒
 _event_texts_cache: dict[str, str] = {}
 _event_texts_at: float = 0.0
+
+
+# 每副本推进任务：后端驱动时间线，每 10 秒执行一个节点（开发节奏，改这里）
+TICK_SECONDS = 10
+_tick_tasks: dict[int, asyncio.Task] = {}
+
+
+def spawn_tick_task(raid_id: int, team_id: int) -> None:
+    """为进行中的副本启动推进后台任务（幂等；服务重启后按进行中副本补启）。"""
+    task = _tick_tasks.get(raid_id)
+    if task is not None and not task.done():
+        return
+    _tick_tasks[raid_id] = asyncio.create_task(_tick_loop(raid_id, team_id))
+
+
+def stop_tick_task(raid_id: int) -> None:
+    task = _tick_tasks.pop(raid_id, None)
+    if task is not None:
+        task.cancel()
+
+
+def stop_all_tick_tasks() -> None:
+    for task in _tick_tasks.values():
+        task.cancel()
+    _tick_tasks.clear()
+
+
+async def _tick_loop(raid_id: int, team_id: int) -> None:
+    """后端驱动：每 TICK_SECONDS 秒推进一个节点，副本结束/异常自然退出。"""
+    try:
+        while True:
+            await asyncio.sleep(TICK_SECONDS)
+            async with SessionLocal() as db:
+                raid = (
+                    await db.execute(select(Raid).where(Raid.id == raid_id))
+                ).scalar_one_or_none()
+                if raid is None or raid.status != "进行中":
+                    return
+                try:
+                    await _do_tick(db, raid_id, team_id)
+                except ApiError:
+                    return  # 副本结束等业务终态，任务退出
+    except asyncio.CancelledError:
+        pass
 
 
 async def get_event_texts() -> dict[str, str]:
@@ -715,16 +760,12 @@ async def create_raid(
         raise
 
     spawn_chat_task(raid.id)  # 副本开始：启动团队聊天后台任务
+    spawn_tick_task(raid.id, team.id)  # 副本开始：启动时间线推进后台任务
     return {"raid": await raid_payload(db, raid)}
 
 
-@router.post("/{raid_id}/tick")
-async def tick_raid(
-    raid_id: int,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """推进一个时间线节点：执行当前节点，返回 true 进下一个、false 原地重试。
+async def _do_tick(db: AsyncSession, raid_id: int, team_id: int) -> dict | None:
+    """执行一个时间线节点（事务内，含行锁与提交）。返回结果 dict；副本不存在/已结束返回 None。
 
     事件语义（节点可人为编排，顺序不限），每个 event 对应 NODE_HANDLERS 里的
     一个 handler 子函数：
@@ -732,19 +773,14 @@ async def tick_raid(
     fight_end=结算（params.boss_id）：win→3+1 掉落（3 件部位装备 + 50% 门派武器，
     逐件分配给符合的成员或分解为五行石）返回 true；lose→消耗重试返回 false
     原地重试，重试耗尽副本失败散团（不解散队伍，玩家手动解散）。"""
-    team = (
-        await db.execute(select(Team).where(Team.user_id == user.id, Team.deleted_at.is_(None)))
-    ).scalar_one_or_none()
-    if team is None:
-        raise ApiError(404, 40400, "还没有团队")
     try:
         raid = (
             await db.execute(select(Raid).where(Raid.id == raid_id).with_for_update())
         ).scalar_one_or_none()
-        if raid is None or raid.team_id != team.id:
-            raise ApiError(404, 40400, "副本实例不存在")
+        if raid is None or raid.team_id != team_id:
+            return None
         if raid.status != "进行中":
-            raise ApiError(409, 40900, "该副本已结束")
+            return None
 
         dungeon = await db.get(Dungeon, raid.dungeon_id)
         timeline = json.loads(dungeon.timeline or "[]")
@@ -755,7 +791,7 @@ async def tick_raid(
             raid.status = "已通关"
             raid.finished_at = datetime.now()
             await db.commit()
-            return {"raid": await raid_payload(db, raid)}
+            return None
 
         node = timeline[raid.node_index]
         event = node.get("event")
@@ -777,7 +813,7 @@ async def tick_raid(
                 select(Member, Xinfa, Sect)
                 .join(Xinfa, Member.xinfa_id == Xinfa.id)
                 .join(Sect, Xinfa.sect_id == Sect.id)
-                .where(Member.team_id == team.id, Member.deleted_at.is_(None))
+                .where(Member.team_id == team_id, Member.deleted_at.is_(None))
                 .order_by(Member.id)
             )
         ).all()
@@ -789,6 +825,7 @@ async def tick_raid(
             ).scalars().all()
         }
 
+        team = await db.get(Team, team_id)
         ctx = NodeContext(
             db=db,
             team=team,
@@ -816,8 +853,8 @@ async def tick_raid(
                 raid.finished_at = datetime.now()
                 message = message or "副本通关"
 
-        log = json.loads(raid.log or "[]")
-        log.append(
+        log_entries = json.loads(raid.log or "[]")
+        log_entries.append(
             {
                 "step": raid.node_index if advance else raid.node_index + 1,
                 "event": event,
@@ -825,7 +862,7 @@ async def tick_raid(
                 "time": datetime.now().strftime("%H:%M:%S"),
             }
         )
-        raid.log = json.dumps(log, ensure_ascii=False)
+        raid.log = json.dumps(log_entries, ensure_ascii=False)
         raid_status = raid.status
         await db.commit()
     except BaseException:
@@ -837,9 +874,27 @@ async def tick_raid(
         "advance": advance,
         "drops": drops_desc,
         "raid_status": raid_status,
-        "stats": stats,
         "raid": await raid_payload(db, raid),
     }
+
+
+@router.post("/{raid_id}/tick")
+async def tick_raid(
+    raid_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """推进一个时间线节点（HTTP 端点：鉴权 + 校验归属，核心逻辑在 _do_tick）。"""
+    team = await get_my_team(db, user.id)
+    if team is None:
+        raise ApiError(404, 40400, "还没有团队")
+    try:
+        result = await _do_tick(db, raid_id, team.id)
+        if result is None:
+            raise ApiError(409, 40900, "该副本已结束")
+    except ApiError:
+        raise
+    return result
 
 
 @router.post("/{raid_id}/abandon")
@@ -878,4 +933,5 @@ async def abandon_raid(
         raise
 
     stop_chat_task(raid_id)  # 解散：停止该副本的聊天任务
+    stop_tick_task(raid_id)  # 同时停止推进任务
     return {"raid": await raid_payload(db, raid)}

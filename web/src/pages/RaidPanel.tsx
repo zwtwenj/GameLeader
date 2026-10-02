@@ -9,8 +9,6 @@ const ROLE_BADGE: Record<string, string> = {
   输出: 'bg-red-100 text-red-700',
 }
 
-const TICK_MS = 10_000 // 开发阶段：每 10 秒推进一步
-
 /** 带标题栏的固定高度分区：内容在区域内滚动，区域高度不随内容变化。 */
 function Section({
   title,
@@ -39,7 +37,7 @@ function Section({
 }
 
 /** 副本悬浮窗：固定右侧，可收起（右缘竖排标签）/展开（固定分区侧栏）。
- * 支持同时多个副本实例：窗内以页签切换，每个进行中的副本各自自动推进。 */
+ * 支持同时多个副本实例：窗内以页签切换；推进由后端任务驱动，本组件纯展示。 */
 export default function RaidPanel() {
   const raids = useRaid((s) => s.raids)
   const status = useRaid((s) => s.status)
@@ -56,7 +54,6 @@ export default function RaidPanel() {
   }, [raids, activeId])
 
   const raid = raids.find((r) => r.id === activeId) ?? null
-  const ongoingCount = raids.filter((r) => r.status === '进行中').length
 
   if (status !== 'idle' || raids.length === 0) return null
 
@@ -102,51 +99,20 @@ export default function RaidPanel() {
       </div>
 
       {raid && <RaidDetail raid={raid} />}
-
-      {ongoingCount > 1 && (
-        <p className="text-center text-xs text-neutral-400">
-          {ongoingCount} 个副本同时进行中，每个独立推进
-        </p>
-      )}
     </div>
   )
 }
 
-/** 单个副本的详情分块（进行中自动推进；结束保持展示）。 */
+/** 单个副本的详情分块：展示 + 解散。推进由后端任务驱动，本组件纯展示。 */
 function RaidDetail({ raid }: { raid: import('../stores/raid').RaidInfo }) {
-  const { tick, abandonRaid, load } = useRaid()
+  const { abandonRaid, load } = useRaid()
   const [abandoning, setAbandoning] = useState(false)
-  const [ticking, setTicking] = useState(false)
   const [error, setError] = useState('')
-  const busyRef = useRef(false)
   const logRef = useRef<HTMLDivElement>(null)
   const chatRef = useRef<HTMLDivElement>(null)
 
-  const raidId = raid.id
-  const raidStatus = raid.status
   const logLength = raid.log.length
   const chatLength = raid.chat.length
-
-  // 进行中每 10 秒自动推进一步（每个副本实例独立 interval）
-  useEffect(() => {
-    if (raidStatus !== '进行中' || !raidId) return
-    let cancelled = false
-    const id = setInterval(async () => {
-      if (busyRef.current || cancelled) return
-      busyRef.current = true
-      try {
-        await tick(raidId)
-      } catch {
-        /* 单次推进失败等下一轮 */
-      } finally {
-        busyRef.current = false
-      }
-    }, TICK_MS)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-  }, [raidId, raidStatus, tick])
 
   // 记录/聊天追加时自动滚到底部
   useEffect(() => {
@@ -173,21 +139,6 @@ function RaidDetail({ raid }: { raid: import('../stores/raid').RaidInfo }) {
       await load().catch(() => {})
     } finally {
       setAbandoning(false)
-    }
-  }
-
-  async function handleTick() {
-    if (busyRef.current || raid.status !== '进行中') return
-    setError('')
-    setTicking(true)
-    try {
-      await tick(raid.id)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : '出了点问题，请重试')
-      await load().catch(() => {})
-    } finally {
-      busyRef.current = false
-      setTicking(false)
     }
   }
 
@@ -230,7 +181,7 @@ function RaidDetail({ raid }: { raid: import('../stores/raid').RaidInfo }) {
       {raid.status === '进行中' && raid.current_boss && (
         <div className="rounded-lg border border-neutral-200">
           <div className="border-b border-neutral-100 bg-neutral-50 px-2.5 py-1.5 text-xs font-medium text-neutral-500">
-            当前 BOSS
+            当前 BOSS（推进由后端任务驱动）
           </div>
           <div className="flex items-center justify-between px-2.5 py-2">
             <div>
@@ -240,16 +191,7 @@ function RaidDetail({ raid }: { raid: import('../stores/raid').RaidInfo }) {
                 {raid.current_boss.drop_high}
               </p>
             </div>
-            <div className="text-right">
-              <button
-                className="rounded border border-neutral-300 px-2.5 py-1 text-xs text-neutral-600 hover:bg-neutral-200 disabled:opacity-50"
-                onClick={() => void handleTick()}
-                disabled={ticking}
-              >
-                {ticking ? '推进中…' : '推进一步'}
-              </button>
-              <p className="mt-1 text-[10px] text-neutral-400">每 10 秒自动推进</p>
-            </div>
+
           </div>
         </div>
       )}

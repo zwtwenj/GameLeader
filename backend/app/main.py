@@ -37,7 +37,13 @@ from .models import (  # noqa: F401  确保 create_all 时表已注册
     User,
     Xinfa,
 )
-from .raid import router as raid_router, spawn_chat_task, stop_all_chat_tasks
+from .raid import (
+    router as raid_router,
+    spawn_chat_task,
+    spawn_tick_task,
+    stop_all_chat_tasks,
+    stop_all_tick_tasks,
+)
 from .seed import seed_dungeon, seed_items, seed_xinfa
 from .team import router as team_router
 from .warehouse import router as warehouse_router
@@ -52,11 +58,18 @@ async def lifespan(app: FastAPI):
         await seed_xinfa(db)
         await seed_dungeon(db)
         # 服务（重启）恢复：给仍在进行中的副本补启聊天后台任务
-        ongoing = (await db.execute(select(Raid.id).where(Raid.status == "进行中"))).scalars().all()
-    for raid_id in ongoing:
+        ongoing = (
+            await db.execute(
+                select(Raid.id, Raid.team_id).where(Raid.status == "进行中")
+            )
+        ).all()
+    for raid_id, team_id in ongoing:
         spawn_chat_task(raid_id)
+        spawn_tick_task(raid_id, team_id)
     yield
     stop_all_chat_tasks()
+    stop_all_tick_tasks()
+    stop_all_tick_tasks()
     await engine.dispose()
 
 
