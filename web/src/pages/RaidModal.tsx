@@ -181,6 +181,8 @@ export default function RaidModal({
             <div className="grid gap-3 sm:grid-cols-2">
               {team.members
                 .filter((m) => roleFilter === null || m.role === roleFilter)
+                // 未锁定的排前面，锁定（副本中）的沉底
+                .sort((a, b) => Number(a.in_raid_id !== null) - Number(b.in_raid_id !== null))
                 .map((m) => {
                 const locked = m.in_raid_id !== null
                 return (
