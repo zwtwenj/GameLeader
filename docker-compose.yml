@@ -1,0 +1,20 @@
+services:
+  backend:
+    build: ./backend
+    container_name: gameleader-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env.production
+    ports:
+      # 只绑本机回环，外网一律走前端 nginx 的 /api 代理
+      - "127.0.0.1:8100:8100"
+
+  web:
+    build: ./web
+    container_name: gameleader-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      # 对外入口：80 被占用时改成 8080:80 等
+      - "80:80"

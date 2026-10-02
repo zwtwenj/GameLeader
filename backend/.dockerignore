@@ -1,0 +1,10 @@
+# 后端构建上下文排除（context = ./backend）
+venv
+__pycache__
+**/__pycache__
+*.pyc
+.env
+.env.production
+ mig*.py
+_d*.py
+_t*.py
